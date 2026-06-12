@@ -1,0 +1,31 @@
+version: 1
+purpose: 제조 점검/정비 보고서 구성 템플릿.
+templates:
+  maintenance_report:
+    title_ko: 점검/정비 보고서 초안
+    sections:
+      - 기본 정보
+      - 대상 설비/서브시스템
+      - 입력 공정 데이터
+      - 예측 결과
+      - 고장모드 분석
+      - 위험도 평가
+      - 관련 문서 근거
+      - 안전 게이트 확인
+      - 권장 조치
+      - 담당자 확인 필요 사항
+  safety_response_report:
+    title_ko: 안전 대응 기록 초안
+    sections:
+      - 상황 요약
+      - 관련 안전 절차
+      - 필수 확인 사항
+      - 금지 사항
+      - 담당자/안전관리자 확인
+  knowledge_qa_report:
+    title_ko: 기술 질의응답 기록
+    sections:
+      - 질문
+      - 검색 문서
+      - 답변 요약
+      - 참고 문서

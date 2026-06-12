@@ -1,0 +1,69 @@
+version: 1
+purpose: 고장모드와 공정 조건에 따른 점검/조치 후보를 구조화한다.
+actions:
+  inspect_tool_wear:
+    label_ko: 공구 마모 상태 점검
+    description_ko: 공구 마모량, 사용 시간, 칩/파손 여부, 가공 품질 저하 여부를 확인한다.
+    applicable_failure_modes: [TWF, OSF]
+    evidence_tags: [tool_wear_high]
+    related_subsystems: [Tool Changer, Spindle]
+    requires_machine_stop: true
+    requires_loto: true
+    requires_authorized_person: true
+    priority: high
+    output_phrase: 공구 마모 상태를 확인하고, 필요 시 공구 교체 또는 가공 조건 조정을 검토하세요.
+  inspect_load_condition:
+    label_ko: 토크 부하 조건 점검
+    description_ko: 토크가 높은 원인이 가공 조건, 공구 상태, 소재 조건, 회전수 조합 때문인지 확인한다.
+    applicable_failure_modes: [OSF, PWF]
+    evidence_tags: [torque_high]
+    related_subsystems: [Spindle, Servo Motor]
+    requires_machine_stop: false
+    requires_loto: conditional
+    requires_authorized_person: true
+    priority: high
+    output_phrase: 토크 부하 조건과 회전수 조합을 확인하고, 과부하가 반복되는 조건을 재검토하세요.
+  inspect_cooling_system:
+    label_ko: 냉각/방열 상태 점검
+    description_ko: 냉각수 잔량, 필터 막힘, 펌프 작동, 노즐 흐름, 주변 온도 조건을 확인한다.
+    applicable_failure_modes: [HDF]
+    evidence_tags: [air_temperature_high, process_temperature_high]
+    related_subsystems: [Coolant System, Spindle]
+    requires_machine_stop: false
+    requires_loto: conditional
+    requires_authorized_person: true
+    priority: medium
+    output_phrase: 냉각수 상태, 필터, 펌프, 노즐 흐름과 방열 상태를 확인하세요.
+  inspect_power_output:
+    label_ko: 회전수/토크/출력 조건 점검
+    description_ko: 회전수와 토크 조합, 전원/드라이브 경보, 출력 조건 이상 여부를 확인한다.
+    applicable_failure_modes: [PWF]
+    evidence_tags: [rpm_high, rpm_low, torque_high]
+    related_subsystems: [Spindle, Servo Motor, Control Panel]
+    requires_machine_stop: false
+    requires_loto: conditional
+    requires_authorized_person: true
+    priority: high
+    output_phrase: 회전수와 토크 조합, 모터/드라이브 경보, 전원 조건을 확인하세요.
+  review_history:
+    label_ko: 최근 이력 및 유사 사례 확인
+    description_ko: 원인이 불명확하거나 RNF가 의심될 때 최근 경보, 정비, 작업 조건 변경 이력을 확인한다.
+    applicable_failure_modes: [RNF]
+    evidence_tags: []
+    related_subsystems: [GeneralMachine]
+    requires_machine_stop: false
+    requires_loto: false
+    requires_authorized_person: true
+    priority: medium
+    output_phrase: 최근 경보/정비/작업 조건 변경 이력을 확인하고 담당자가 추가 점검하세요.
+  check_emergency_plan:
+    label_ko: 비상대응계획 확인
+    description_ko: 화재, 누출, 부상, 대피 등 비상 상황에서는 현장 비상대응계획과 보고 체계를 우선한다.
+    applicable_failure_modes: []
+    evidence_tags: [emergency]
+    related_subsystems: [Safety System]
+    requires_machine_stop: false
+    requires_loto: false
+    requires_authorized_person: true
+    priority: critical
+    output_phrase: 비상 상황이면 현장 비상대응계획을 우선하고 관리자/안전관리자에게 즉시 보고하세요.

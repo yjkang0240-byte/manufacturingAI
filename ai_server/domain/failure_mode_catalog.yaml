@@ -1,0 +1,54 @@
+version: 1
+purpose: AI4I 고장모드와 제조 점검/안전 절차를 연결한다.
+failure_modes:
+  TWF:
+    name_ko: 공구 마모 고장
+    description_ko: 공구 사용 시간이 누적되어 마모가 커지고 가공 품질 또는 설비 부하에 영향을 주는 고장 유형
+    related_features: [tool_wear_high]
+    related_subsystems: [Tool Changer, Spindle]
+    symptoms: [공구 마모 누적, 표면 품질 저하 가능성, 절삭 부하 증가]
+    recommended_checks: [공구 마모 상태 확인, 공구 교체 필요 여부 검토, 공구 홀더/매거진 상태 확인]
+    safety_gates: [loto_if_physical_maintenance, rotating_parts_guard_check]
+    report_sections: [공구 사용 시간, 공구 상태, 교체 필요 여부, 재발 방지 조치]
+  HDF:
+    name_ko: 방열/열 방출 고장
+    description_ko: 공기 온도와 공정 온도 조건이 높아 냉각 또는 방열 성능 저하가 의심되는 고장 유형
+    related_features: [air_temperature_high, process_temperature_high]
+    related_subsystems: [Coolant System, Spindle]
+    symptoms: [고온 조건, 냉각 성능 저하 가능성, 열 변형/열화 위험]
+    recommended_checks: [냉각수 상태 확인, 냉각 펌프/필터/노즐 확인, 주변 온도와 방열 상태 확인]
+    safety_gates: [hot_surface_warning, loto_if_physical_maintenance]
+    report_sections: [온도 조건, 냉각 계통 상태, 방열 상태, 고온 작업 주의사항]
+  PWF:
+    name_ko: 전력/출력 조건 고장
+    description_ko: 회전수와 토크 조합 또는 출력 조건이 비정상적일 때 발생 가능한 고장 유형
+    related_features: [torque_high, rpm_high, rpm_low]
+    related_subsystems: [Spindle, Servo Motor, Control Panel]
+    symptoms: [출력 조건 불안정, 과전류/부하 가능성, 구동계 이상 가능성]
+    recommended_checks: [회전수와 토크 조합 확인, 구동 모터/드라이브 상태 확인, 전원/제어반 경보 확인]
+    safety_gates: [electrical_isolation_check, loto_if_physical_maintenance]
+    report_sections: [회전수/토크 조건, 출력 조건, 제어반 경보, 전기 안전 확인]
+  OSF:
+    name_ko: 과부하 고장
+    description_ko: 높은 토크와 공구 마모 등으로 설비에 과도한 부하가 걸린 상태와 관련된 고장 유형
+    related_features: [torque_high, tool_wear_high, rpm_low_or_unstable]
+    related_subsystems: [Spindle, Tool Changer, Servo Motor]
+    symptoms: [부하 증가, 공구 마모 누적, 축/스핀들 부담 증가]
+    recommended_checks: [토크 부하 조건 확인, 공구 마모 상태 확인, 회전수와 토크 조합 확인, 가공 조건 재검토]
+    safety_gates: [loto_if_physical_maintenance, rotating_parts_guard_check]
+    report_sections: [부하 조건, 공구 상태, 회전 조건, 재발 방지 조치]
+  RNF:
+    name_ko: 무작위 고장
+    description_ko: 명확한 단일 원인으로 설명하기 어려운 고장 유형. 추가 데이터와 현장 점검이 필요하다.
+    related_features: []
+    related_subsystems: [GeneralMachine]
+    symptoms: [원인 불명, 추가 점검 필요]
+    recommended_checks: [이력 데이터 확인, 최근 경보/정비 기록 확인, 현장 담당자 점검]
+    safety_gates: [authorized_person_review]
+    report_sections: [추가 확인 사항, 현장 점검 결과, 담당자 검토]
+feature_tags:
+  Air temperature: air_temperature_high
+  Process temperature: process_temperature_high
+  Rotational speed: rpm_condition
+  Torque: torque_high
+  Tool wear: tool_wear_high

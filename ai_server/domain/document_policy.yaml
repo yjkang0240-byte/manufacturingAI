@@ -1,0 +1,29 @@
+version: 1
+purpose: 제조 RAG 문서 검색 정책.
+doc_types:
+  operator_manual:
+    use_for: [knowledge_qa, procedure, operation]
+    preferred_sources: [Haas]
+  troubleshooting:
+    use_for: [failure_analysis, action_planning]
+    preferred_sources: [Haas]
+  preventive_maintenance:
+    use_for: [maintenance, action_planning, report]
+    preferred_sources: [Haas]
+  safety_standard:
+    use_for: [safety_ops, safety_gate]
+    preferred_sources: [OSHA, KOSHA]
+  safety_procedure:
+    use_for: [emergency, loto, evacuation]
+    preferred_sources: [OSHA, KOSHA]
+  technical_document_guide:
+    use_for: [documentation, report_template, technical_docs]
+    preferred_sources: [KOSHA]
+  equipment_taxonomy:
+    use_for: [asset_context, metadata]
+    preferred_sources: [KOSHA]
+retrieval_policy:
+  always_include_safety_docs_if_safety_gate: true
+  prefer_official_sources: true
+  max_sources_per_answer: 5
+  require_citation_for_safety_answer: true

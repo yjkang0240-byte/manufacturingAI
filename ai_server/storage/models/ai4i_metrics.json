@@ -1,0 +1,39 @@
+{
+  "trained_rows": 10000,
+  "features": [
+    "Type",
+    "Air temperature [K]",
+    "Process temperature [K]",
+    "Rotational speed [rpm]",
+    "Torque [Nm]",
+    "Tool wear [min]"
+  ],
+  "modes": [
+    "TWF",
+    "HDF",
+    "PWF",
+    "OSF",
+    "RNF"
+  ],
+  "validation": {
+    "test_size": 2000,
+    "failure_accuracy": 0.9785,
+    "failure_precision": 0.766,
+    "failure_recall": 0.5294,
+    "failure_f1": 0.6261,
+    "failure_roc_auc": 0.9563,
+    "mode_micro_f1": 0.5882,
+    "mode_macro_f1": 0.4376
+  },
+  "thresholds": {
+    "failure_predicted": 0.5,
+    "mode_predicted": 0.35,
+    "risk_caution": 0.2,
+    "risk_warning": 0.4,
+    "risk_critical": 0.7
+  },
+  "limitations": [
+    "AI4I is a public synthetic/benchmark-style dataset and is not a plant-specific validated model.",
+    "Predictions must be treated as decision-support signals, not maintenance or safety decisions."
+  ]
+}

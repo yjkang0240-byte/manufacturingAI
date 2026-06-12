@@ -1,0 +1,39 @@
+version: 1
+purpose: 제조 설비 계층 모델. 질문을 설비/서브시스템/부품 단위로 분해해 RAG 검색과 안전 게이트 선택에 사용한다.
+equipment:
+  CNC:
+    aliases: [cnc, mill, milling, lathe, machine, 가공기, 밀링, 선반, 공작기계, 설비]
+    description_ko: 절삭/가공 작업을 수행하는 CNC 계열 설비
+    subsystems:
+      Spindle:
+        aliases: [spindle, 스핀들, 회전부, 주축, chuck, 척]
+        components: [bearing, motor, chuck, drawbar]
+        safety_hazards: [rotating_parts, entanglement, flying_chips]
+      Tool Changer:
+        aliases: [tool changer, atc, 공구교환, 공구 교환, tool change, 매거진]
+        components: [arm, magazine, pocket, tool_holder]
+        safety_hazards: [pinch_point, unexpected_motion]
+      Coolant System:
+        aliases: [coolant, 냉각, 냉각수, coolant pump, 펌프, filter, 필터, nozzle]
+        components: [pump, filter, tank, nozzle, hose]
+        safety_hazards: [slip, chemical_exposure, hot_surface]
+      Servo Motor:
+        aliases: [servo, 서보, motor, 모터, 축, x축, y축, z축]
+        components: [motor, drive, encoder, ball_screw]
+        safety_hazards: [unexpected_motion, electrical]
+      Control Panel:
+        aliases: [control, controller, panel, 제어반, 컨트롤, 비상정지, emergency stop, e-stop]
+        components: [emergency_stop, interlock, hmi, breaker]
+        safety_hazards: [electrical, emergency_stop]
+  GeneralMachine:
+    aliases: [machine, machinery, 장비, 기계, 위험기계, 설비]
+    description_ko: 특정 설비 유형이 명확하지 않은 일반 산업 설비
+    subsystems:
+      Drive Unit:
+        aliases: [drive, 구동부, 모터, 회전부]
+        components: [motor, shaft, belt, gear]
+        safety_hazards: [rotating_parts, pinch_point]
+      Safety System:
+        aliases: [guard, 가드, 방호, interlock, 인터록, emergency stop, 비상정지]
+        components: [guard, interlock, safety_light_curtain, emergency_stop]
+        safety_hazards: [machine_guarding, emergency_stop]

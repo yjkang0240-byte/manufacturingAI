@@ -1,0 +1,90 @@
+version: 1
+purpose: 제조 Agent가 답변 전 반드시 확인해야 하는 안전 게이트 정책.
+safety_gates:
+  loto_if_physical_maintenance:
+    name_ko: 정비 전 LOTO/에너지 차단 확인
+    description_ko: 물리적 점검·분해·교체 등 정비 작업 전 에너지 차단과 잠금/표지 절차 필요 여부를 확인한다.
+    severity: high
+    triggers: [정비, 점검, 교체, 분해, 수리, maintenance, repair, replace, tool_wear_high, OSF, TWF, PWF]
+    required_checks:
+      - 전원 및 에너지원을 차단했는지 확인
+      - 잔류 에너지 해소 여부 확인
+      - 승인된 담당자가 LOTO 절차를 적용했는지 확인
+      - 설비가 무전압/무에너지 상태인지 현장 절차로 확인
+    forbidden_agent_actions:
+      - 설비를 자동으로 정지했다고 말하기
+      - 안전 상태를 AI가 보증한다고 말하기
+      - 잠금/표지 절차를 생략하라고 말하기
+    escalation: 안전관리자 또는 자격 있는 정비 담당자 확인 필요
+  rotating_parts_guard_check:
+    name_ko: 회전부/끼임 지점 방호 확인
+    description_ko: 스핀들, 공구, 축, 벨트 등 회전부 또는 끼임 지점 접근 전 방호장치와 비상정지 장치를 확인한다.
+    severity: high
+    triggers: [회전부, 스핀들, 공구, tool, spindle, rpm, rotating, OSF, TWF]
+    required_checks:
+      - 운전 중 회전부 접근 금지
+      - 가드/인터록/방호장치 상태 확인
+      - 비상정지 장치 위치와 동작 가능 상태 확인
+      - 비산물/칩 위험에 대한 보호구 확인
+    forbidden_agent_actions:
+      - 운전 중 가드 제거를 지시하기
+      - 운전 중 손이나 도구로 회전부를 점검하라고 말하기
+      - 비상정지 장치 우회를 권고하기
+    escalation: 회전부 접근이 필요한 작업은 승인된 담당자만 수행
+  hot_surface_warning:
+    name_ko: 고온 표면/방열 위험 확인
+    description_ko: 온도 조건이 높거나 HDF가 의심될 때 고온 표면, 냉각계통, 화상 위험을 확인한다.
+    severity: medium
+    triggers: [온도, 고온, 냉각, 방열, coolant, HDF, air_temperature_high, process_temperature_high]
+    required_checks:
+      - 고온 표면 접촉 금지
+      - 냉각수/냉각계통 상태 확인
+      - 보호장갑 등 적절한 보호구 착용 여부 확인
+      - 충분한 냉각 후 점검 여부 확인
+    forbidden_agent_actions:
+      - 고온 부품을 즉시 손으로 만지라고 말하기
+      - 냉각 장치를 AI가 자동 제어한다고 말하기
+    escalation: 고온 경보 또는 누출이 있으면 현장 안전 절차 우선
+  electrical_isolation_check:
+    name_ko: 전기/제어반 격리 확인
+    description_ko: PWF 또는 제어반/전기 작업 의심 시 전기적 격리와 자격자 확인이 필요하다.
+    severity: high
+    triggers: [전기, 제어반, power, electrical, PWF, 드라이브, 모터, 제어]
+    required_checks:
+      - 전기 작업은 자격 있는 담당자가 수행
+      - 전원 차단 및 무전압 확인
+      - 제어반 개방 전 사내 전기안전 절차 확인
+      - 과전류/차단기/경보 이력 확인
+    forbidden_agent_actions:
+      - 전기함을 임의로 열라고 지시하기
+      - 무전압 확인 없이 작업하라고 말하기
+      - AI가 전원 차단을 수행했다고 말하기
+    escalation: 전기 담당자 또는 안전관리자 확인 필요
+  emergency_response:
+    name_ko: 비상상황 대응 절차 우선
+    description_ko: 화재, 누출, 부상, 대피 상황은 현장 비상대응계획을 우선한다.
+    severity: critical
+    triggers: [비상, 화재, 누출, 부상, 대피, emergency, evacuation, fire]
+    required_checks:
+      - 현장 비상대응계획 우선 확인
+      - 관리자/안전관리자에게 즉시 보고
+      - 필요 시 지정 대피로를 따라 대피
+      - 인명 안전을 최우선으로 판단
+    forbidden_agent_actions:
+      - 현장 비상대응 책임자를 대체하기
+      - 대피가 필요한 상황에서 계속 작업을 지시하기
+      - 법적 안전 판단을 확정적으로 말하기
+    escalation: 즉시 현장 책임자/안전관리자 개입 필요
+  authorized_person_review:
+    name_ko: 자격 있는 담당자 검토
+    description_ko: 원인이 불명확하거나 실제 정비 판단이 필요한 경우 자격 있는 담당자 검토가 필요하다.
+    severity: medium
+    triggers: [RNF, 원인 불명, 확인 필요, unknown]
+    required_checks:
+      - 최근 경보/정비 이력 확인
+      - 담당자 현장 점검 수행
+      - 필요 시 제조사 또는 안전관리자 문의
+    forbidden_agent_actions:
+      - 원인을 단정하기
+      - 담당자 확인 없이 조치를 확정하기
+    escalation: 담당자 검토 필요

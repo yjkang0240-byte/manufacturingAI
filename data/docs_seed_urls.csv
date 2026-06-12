@@ -1,0 +1,11 @@
+source,category,title,url,doc_type,equipment_type,language,local_path
+Haas,manual,Haas Operator Manual,https://www.haascnc.com/owners/Service/operators-manual.html,operator_manual,CNC,en,data/raw_docs/haas/manuals/operator_manual.html
+Haas,troubleshooting,Haas Service Support,https://www.haascnc.com/service.html,troubleshooting,CNC,en,data/raw_docs/haas/troubleshooting/service.html
+OSHA,safety,Emergency Action Plan 1910.38,https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.38,safety_procedure,general,en,data/raw_docs/osha/emergency_action_plan/1910_38.html
+OSHA,safety,Evacuation Plans and Procedures,https://www.osha.gov/etools/evacuation-plans-procedures/eap,safety_procedure,general,en,data/raw_docs/osha/emergency_action_plan/eap.html
+OSHA,safety,Machine Guarding 1910.212,https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.212,safety_standard,machine,en,data/raw_docs/osha/machine_guarding/1910_212.html
+OSHA,safety,Lockout Tagout 1910.147,https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.147,safety_standard,machine,en,data/raw_docs/osha/lockout_tagout/1910_147.html
+KOSHA,technical,Guide for Technical Documents,https://miis.kosha.or.kr/oshci/eng/busi/SmarkGuide.do,technical_document_guide,general,en,data/raw_docs/kosha/technical_guides/smark_guide.html
+KOSHA,safety,Hazardous Machine Classification,https://miis.kosha.or.kr/oshci/eng/busi/KCsMerchandise.do,equipment_taxonomy,general,en,data/raw_docs/kosha/taxonomy/kcs_merchandise.html
+NIST,testbed,SMS Test Bed,https://github.com/usnistgov/smstestbed,testbed_docs,general,en,data/raw_docs/nist/sms_testbed/smstestbed.html
+PIDQA,drawing,PIDQA Dataset,https://github.com/mgupta70/PIDQA,drawing_qa,P&ID,en,data/raw_docs/pidqa/drawing_qa/pidqa.html
