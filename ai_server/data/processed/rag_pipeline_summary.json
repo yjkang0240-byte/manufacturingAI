@@ -1,0 +1,20 @@
+{
+  "static_sources": null,
+  "kosha_sources": null,
+  "documents": {
+    "count": 44
+  },
+  "chunks": {
+    "count": 727,
+    "chunk_size": 1000,
+    "chunk_overlap": 150
+  },
+  "corpus_report": "/Users/guswnd0432389/Desktop/manufacturing_ai_agent_domain_fastapi/ai_server/data/processed/rag_corpus_report.md",
+  "chroma": {
+    "indexed_chunks": 727,
+    "collection": "manufacturing_rag",
+    "persist_dir": "/Users/guswnd0432389/Desktop/manufacturing_ai_agent_domain_fastapi/ai_server/data/vector_db/chroma",
+    "embedding_provider": "openai",
+    "embedding_model": "text-embedding-3-small"
+  }
+}

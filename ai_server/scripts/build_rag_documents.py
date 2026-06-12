@@ -91,15 +91,19 @@ def kosha_documents(*, keep_metadata_only: bool) -> list[dict[str, Any]]:
     return documents
 
 
-def build_documents(*, keep_metadata_only: bool = True) -> list[dict[str, Any]]:
+def build_documents(*, keep_metadata_only: bool = True, source_ids: set[str] | None = None) -> list[dict[str, Any]]:
     ensure_dirs()
     manifest = load_manifest()
     documents: list[dict[str, Any]] = []
     for source in manifest.get('sources') or []:
+        if source_ids and source.get('id') not in source_ids:
+            continue
         doc = static_document(source, keep_metadata_only=keep_metadata_only)
         if doc:
             documents.append(doc)
-    documents.extend(kosha_documents(keep_metadata_only=keep_metadata_only))
+    include_kosha = bool(manifest.get('kosha_api')) or KOSHA_INDEX_JSON_PATH.parent == RAG_DOCUMENTS_PATH.parent
+    if include_kosha:
+        documents.extend(kosha_documents(keep_metadata_only=keep_metadata_only))
     write_jsonl(RAG_DOCUMENTS_PATH, documents)
     return documents
 
@@ -107,8 +111,9 @@ def build_documents(*, keep_metadata_only: bool = True) -> list[dict[str, Any]]:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Build RAG document JSONL from downloaded OSHA/Haas/KOSHA raw files.')
     parser.add_argument('--drop-metadata-only', action='store_true', help='Do not include documents with failed text extraction.')
+    parser.add_argument('--source-id', action='append', help='Include only the given static manifest source id. Can be repeated.')
     args = parser.parse_args()
-    documents = build_documents(keep_metadata_only=not args.drop_metadata_only)
+    documents = build_documents(keep_metadata_only=not args.drop_metadata_only, source_ids=set(args.source_id or []) or None)
     print(f'documents={len(documents)} -> {RAG_DOCUMENTS_PATH}')
 
 

@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
-from pathlib import Path
-from urllib.parse import urlparse
 
 import requests
-from dotenv import load_dotenv
 
 from rag_pipeline_utils import (
     HEADERS,
@@ -18,6 +14,7 @@ from rag_pipeline_utils import (
     KOSHA_INDEX_JSON_PATH,
     PROJECT_ROOT,
     classify_kosha_doc,
+    env_value,
     ensure_dirs,
     extension_from_headers_or_url,
     load_manifest,
@@ -28,13 +25,6 @@ from rag_pipeline_utils import (
 )
 
 
-def env_value(name: str, default: str = '') -> str:
-    for env_path in [PROJECT_ROOT / '.env', PROJECT_ROOT / 'ai_server' / '.env']:
-        if env_path.exists():
-            load_dotenv(env_path, override=False)
-    return os.getenv(name, default).strip()
-
-
 def parse_response_json(response: requests.Response) -> dict | None:
     try:
         data = response.json()
@@ -43,8 +33,23 @@ def parse_response_json(response: requests.Response) -> dict | None:
         return None
 
 
+def redact_secrets(value: str) -> str:
+    redacted = value or ''
+    api_key = env_value('KOSHA_API_KEY')
+    if api_key:
+        redacted = redacted.replace(api_key, '<redacted>')
+    import re
+
+    redacted = re.sub(r'(serviceKey=)[^&\s)]+', r'\1<redacted>', redacted)
+    return redacted
+
+
 def dedup_key(item: dict) -> str:
-    return '|'.join(str(item.get(k) or '').strip() for k in ['techGdlnNo', 'techGdlnNm', 'fileDownlUrl'])
+    return '|'.join([str(item.get('techGdlnNo') or '').strip(), str(item.get('techGdlnNm') or '').strip(), file_download_url(item)])
+
+
+def file_download_url(item: dict) -> str:
+    return str(item.get('fileDownlUrl') or item.get('fileDownloadUrl') or item.get('file_download_url') or '').strip()
 
 
 def download_file(url: str, *, title: str, doc_no: str, force: bool = False, timeout: int = 60) -> tuple[str | None, str | None]:
@@ -99,7 +104,13 @@ def download_kosha_sources(
                 if data is None:
                     raw_preview = response.text[:1000]
                     response_path.write_text(response.text, encoding='utf-8', errors='ignore')
-                    api_failures.append({'keyword': keyword, 'page': page, 'url': response.url, 'status_code': response.status_code, 'response_preview': raw_preview})
+                    api_failures.append({
+                        'keyword': keyword,
+                        'page': page,
+                        'url': redact_secrets(response.url),
+                        'status_code': response.status_code,
+                        'response_preview': redact_secrets(raw_preview),
+                    })
                     time.sleep(1)
                     continue
                 write_json(response_path, data)
@@ -110,7 +121,7 @@ def download_kosha_sources(
                         continue
                     title = str(item.get('techGdlnNm') or '').strip()
                     metadata = classify_kosha_doc(title)
-                    file_url = str(item.get('fileDownlUrl') or '').strip()
+                    file_url = file_download_url(item)
                     local_path = None
                     download_error = None
                     if file_url:
@@ -129,7 +140,7 @@ def download_kosha_sources(
                         **metadata,
                     }
             except Exception as exc:
-                api_failures.append({'keyword': keyword, 'page': page, 'url': endpoint, 'error': f'{type(exc).__name__}: {exc}'})
+                api_failures.append({'keyword': keyword, 'page': page, 'url': endpoint, 'error': redact_secrets(f'{type(exc).__name__}: {exc}')})
             time.sleep(1)
 
     rows = sorted(unique.values(), key=lambda row: (str(row.get('project_priority')), str(row.get('techGdlnNm'))))

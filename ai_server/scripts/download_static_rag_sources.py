@@ -9,13 +9,15 @@ import requests
 from rag_pipeline_utils import HEADERS, PROJECT_ROOT, ensure_dirs, load_manifest
 
 
-def download_static_sources(*, force: bool = False, timeout: int = 30) -> dict:
+def download_static_sources(*, force: bool = False, timeout: int = 30, source_ids: set[str] | None = None) -> dict:
     ensure_dirs()
     manifest = load_manifest()
     downloaded: list[str] = []
     skipped: list[str] = []
     failed_downloads: list[dict] = []
     for source in manifest.get('sources') or []:
+        if source_ids and source.get('id') not in source_ids:
+            continue
         url = source.get('url')
         save_path = PROJECT_ROOT / source['save_path']
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,8 +38,9 @@ def download_static_sources(*, force: bool = False, timeout: int = 30) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Download static OSHA/Haas RAG source HTML files from the manifest.')
     parser.add_argument('--force', action='store_true', help='Re-download files even if they already exist.')
+    parser.add_argument('--source-id', action='append', help='Download only the given manifest source id. Can be repeated.')
     args = parser.parse_args()
-    summary = download_static_sources(force=args.force)
+    summary = download_static_sources(force=args.force, source_ids=set(args.source_id or []) or None)
     print(f'downloaded={len(summary["downloaded"])} skipped={len(summary["skipped"])} failed={len(summary["failed_downloads"])}')
     for failed in summary['failed_downloads']:
         print(f'failed id={failed["id"]} url={failed["url"]} error={failed["error"]}')

@@ -223,6 +223,10 @@ cp .env.example .env
 ```env
 KOSHA_API_KEY=
 KOSHA_CALL_API_ID=1050
+RAG_EMBEDDING_PROVIDER=openai
+RAG_EMBEDDING_MODEL=text-embedding-3-small
+CHROMA_COLLECTION=manufacturing_rag
+CHROMA_PERSIST_DIR=ai_server/data/vector_db/chroma
 ```
 
 설치:
@@ -231,7 +235,64 @@ KOSHA_CALL_API_ID=1050
 pip install -r ai_server/requirements.txt
 ```
 
-실행 순서:
+### 5.1.1 한 번에 다운로드부터 Chroma 벡터화까지 실행
+
+아래 명령은 현재 AI4I 제조 데이터와 직접 연결되는 정비/점검/공작기계/회전부/방호/안전장치/절삭/LOTO 관련 source만 우선 수집합니다. OSHA/Haas static source도 LOTO, machine guarding, Haas spindle troubleshooting 중심으로 제한됩니다.
+
+```bash
+python ai_server/scripts/run_rag_vector_pipeline.py \
+  --profile ai4i-mvp \
+  --num-rows 20 \
+  --pages 1 \
+  --reset-chroma
+```
+
+KOSHA primary keyword 전체를 수집하려면:
+
+```bash
+python ai_server/scripts/run_rag_vector_pipeline.py \
+  --profile primary \
+  --num-rows 20 \
+  --pages 1 \
+  --reset-chroma
+```
+
+secondary keyword까지 넓게 수집하려면:
+
+```bash
+python ai_server/scripts/run_rag_vector_pipeline.py \
+  --profile full \
+  --num-rows 50 \
+  --pages 3 \
+  --reset-chroma
+```
+
+특정 키워드만 빠르게 테스트하려면:
+
+```bash
+python ai_server/scripts/run_rag_vector_pipeline.py \
+  --keyword "기계" \
+  --num-rows 10 \
+  --pages 1 \
+  --reset-chroma
+```
+
+이미 다운로드한 raw 파일을 재사용하고 JSONL/Chroma만 다시 만들려면:
+
+```bash
+python ai_server/scripts/run_rag_vector_pipeline.py \
+  --skip-static \
+  --skip-kosha \
+  --reset-chroma
+```
+
+Chroma indexing 없이 `rag_documents.jsonl`, `rag_chunks.jsonl`, `rag_corpus_report.md`까지만 만들려면:
+
+```bash
+python ai_server/scripts/run_rag_vector_pipeline.py --skip-chroma
+```
+
+### 5.1.2 단계별 실행
 
 ```bash
 python ai_server/scripts/download_static_rag_sources.py
@@ -261,6 +322,8 @@ ai_server/data/processed/kosha_download_index.jsonl
 ai_server/data/processed/rag_documents.jsonl
 ai_server/data/processed/rag_chunks.jsonl
 ai_server/data/processed/rag_corpus_report.md
+ai_server/data/processed/rag_pipeline_summary.json
+ai_server/data/vector_db/chroma/
 ```
 
 주의사항:
@@ -274,13 +337,13 @@ ai_server/data/processed/rag_corpus_report.md
 - 실제 답변에서 KOSHA GUIDE는 국내 기술지침/참고자료 성격으로 사용하고, 법적 보증처럼 표현하지 않는다.
 ```
 
-Optional Chroma indexing:
+Chroma indexing만 별도로 다시 실행:
 
 ```bash
-python ai_server/scripts/index_rag_chunks_chroma.py
+python ai_server/scripts/index_rag_chunks_chroma.py --reset
 ```
 
-Chroma는 선택 사항입니다. 기본 완료 기준은 `rag_documents.jsonl`, `rag_chunks.jsonl`, `rag_corpus_report.md` 생성입니다.
+기본 embedding provider는 OpenAI입니다. `.env`의 `OPENAI_API_KEY`와 `RAG_EMBEDDING_MODEL`을 사용합니다. `--embedding-provider chroma-default`를 지정하면 Chroma 기본 embedding 함수에 위임할 수 있지만, 로컬 환경에 따라 추가 모델 다운로드가 필요할 수 있습니다.
 
 ---
 

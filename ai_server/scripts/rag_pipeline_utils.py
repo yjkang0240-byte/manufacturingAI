@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 import zipfile
@@ -12,6 +13,7 @@ from xml.etree import ElementTree
 
 import yaml
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from pypdf import PdfReader
 
 
@@ -28,6 +30,7 @@ RAG_CHUNKS_PATH = PROCESSED_DIR / 'rag_chunks.jsonl'
 KOSHA_INDEX_JSON_PATH = PROCESSED_DIR / 'kosha_download_index.json'
 KOSHA_INDEX_JSONL_PATH = PROCESSED_DIR / 'kosha_download_index.jsonl'
 RAG_CORPUS_REPORT_PATH = PROCESSED_DIR / 'rag_corpus_report.md'
+RAG_PIPELINE_SUMMARY_PATH = PROCESSED_DIR / 'rag_pipeline_summary.json'
 
 HEADERS = {'User-Agent': 'ManufacturingAIResearchBot/0.1 educational project'}
 
@@ -37,6 +40,17 @@ def ensure_dirs() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
+def load_project_env() -> None:
+    for env_path in [PROJECT_ROOT / '.env', AI_SERVER_DIR / '.env']:
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+
+
+def env_value(name: str, default: str = '') -> str:
+    load_project_env()
+    return os.getenv(name, default).strip()
+
+
 def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
     with path.open(encoding='utf-8') as f:
         return yaml.safe_load(f) or {}
@@ -44,7 +58,9 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    tmp.replace(path)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -55,7 +71,9 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('\n'.join(json.dumps(row, ensure_ascii=False) for row in rows), encoding='utf-8')
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text('\n'.join(json.dumps(row, ensure_ascii=False) for row in rows), encoding='utf-8')
+    tmp.replace(path)
 
 
 def normalize_items(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
