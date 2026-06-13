@@ -1,3 +1,8 @@
+# Historical Record
+
+This plan may mention removed legacy execution paths. It is not the current
+runtime contract.
+
 # User Context Engineering Plan
 
 작성일: 2026-06-12
@@ -543,4 +548,3 @@ app.memory.updated_count
 ```text
 유저별 장기 컨텍스트와 최근 실행 이력을 분리해 관리하고, Agent 실행 시 현재 입력·현재 검색 문서·현재 안전 게이트를 최우선으로 두는 context engineering 구조를 설계했습니다. 단순 대화 history 주입이 아니라 profile, session summary, recent runs, long-term memory를 계층화하고 context budget과 삭제 정책을 함께 고려했습니다.
 ```
-

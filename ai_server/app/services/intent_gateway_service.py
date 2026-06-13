@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app.agent.routing import GateContext, GateRegistry, GateResult
-from app.schemas import LLMUsageRecord
+from app.schemas.agent import LLMUsageRecord
 from app.services.glossary_answer_service import GlossaryAnswerService
 from app.services.intent_classifier_service import (
     IntentClassifierInput,
@@ -41,7 +41,6 @@ class IntentGatewayService:
             original_question=original,
             compact_question=compact,
             has_process_data=request.process_data is not None,
-            generate_report=bool(request.generate_report),
             context_resolution=context_resolution,
             last_answer_memory=user_context.get('last_answer_memory') or {},
             glossary_hit=glossary_hit,
@@ -114,7 +113,6 @@ class IntentGatewayService:
             'requires_prediction': output.requires_prediction,
             'requires_rag': output.requires_rag,
             'requires_safety': output.requires_safety,
-            'requires_report': output.requires_report,
             'resolved_claim': output.resolved_claim,
             'phrase_repair': output.phrase_repair.model_dump() if output.phrase_repair else None,
             'focus_update_policy': output.focus_update_policy,
@@ -157,7 +155,6 @@ class IntentGatewayService:
             requires_prediction=result.requires_prediction,
             requires_rag=result.requires_rag,
             requires_safety=result.requires_safety,
-            requires_report=result.requires_report,
             focus_update_policy=result.focus_update_policy,
             confidence=result.confidence,
             reason=result.reason,

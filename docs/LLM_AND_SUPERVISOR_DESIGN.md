@@ -20,14 +20,13 @@
 
 ## 2.1 왜 `/agent/send`를 메인 API로 두는가?
 
-기존 `/agent/run`은 내부 실행 느낌이 강하다. 프론트엔드나 외부 서비스가 호출하기에는 message/session 중심 API가 더 자연스럽다.
+제품 Agent API는 message/session 중심의 `/agent/send` 하나로 정리했다.
 
 따라서 다음처럼 정리했다.
 
 | API | 역할 | 권장 여부 |
 |---|---|---|
 | `POST /agent/send` | 사용자 메시지 기반 메인 Agent API | 권장 |
-| `POST /agent/run` | 기존 MVP 호환용 API | 유지 |
 | `POST /predict` | 예측 Tool 단독 실행 | 내부/디버깅 |
 | `POST /rag/search` | RAG 검색 단독 실행 | 내부/디버깅 |
 | `POST /evaluation/score` | LLM 응답 평가 | 평가/테스트 |
@@ -49,7 +48,6 @@
     "tool_wear_min": 210
   },
   "inspection_notes": "작업자가 공구 마모 증가와 냉각 성능 저하를 의심함",
-  "generate_report": true,
   "mode": "auto",
   "llm_model": "gpt-5.4-mini"
 }
@@ -148,7 +146,6 @@ OpenAI-compatible provider는 벤더마다 Responses API 지원 여부가 다르
 | 토크/공구/온도/불량/고장모드 키워드 | Prediction Layer |
 | 매뉴얼/문서/도면/G-code/트러블슈팅 키워드 | Retrieval Layer |
 | 안전/비상/LOTO/방호/인터록/회전부 키워드 | Safety Layer |
-| 보고서/문서화/점검 결과/초안 키워드 | Documentation Layer |
 | 여러 신호가 함께 있음 | Hybrid intent |
 
 외부 LLM이 route plan을 refinement하더라도 다음 hard signal은 제거할 수 없다.
@@ -156,7 +153,7 @@ OpenAI-compatible provider는 벤더마다 Responses API 지원 여부가 다르
 ```text
 - process_data가 있으면 Prediction Layer 유지
 - 안전 키워드가 있으면 Safety Layer 유지
-- generate_report 또는 inspection_notes가 있으면 Documentation Layer 유지
+- 보고서 형식 요청은 별도 route가 아니라 answer 본문 스타일로 처리
 ```
 
 ---

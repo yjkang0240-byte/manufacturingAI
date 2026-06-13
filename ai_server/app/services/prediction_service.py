@@ -16,7 +16,7 @@ from sklearn.model_selection import train_test_split
 
 from app.config import AI4I_CSV, MODEL_BUNDLE, MODEL_DIR, MODEL_METRICS
 from app.errors import ModelNotReadyError
-from app.schemas import EvidenceFeature, FailureModeScore, PredictionResponse, ProcessData
+from app.schemas.prediction import EvidenceFeature, FailureModeScore, PredictionResponse, ProcessData
 
 FEATURES = [
     'Type', 'Air temperature [K]', 'Process temperature [K]',
@@ -69,20 +69,16 @@ class PredictionService:
         self.model_path = model_path or MODEL_BUNDLE
         self.bundle: ModelBundle | None = None
 
-    def load_or_train(self) -> ModelBundle:
+    def load_bundle(self) -> ModelBundle:
         if self.bundle is not None:
             return self.bundle
         if self.model_path.exists():
             try:
                 self.bundle = joblib.load(self.model_path)
             except Exception as exc:
-                if self.csv_path.exists():
-                    self.bundle = self.train()
-                    return self.bundle
-                raise ModelNotReadyError('Prediction model bundle cannot be loaded and AI4I CSV is missing') from exc
+                raise ModelNotReadyError('Prediction model bundle cannot be loaded') from exc
             return self.bundle
-        self.bundle = self.train()
-        return self.bundle
+        raise ModelNotReadyError('Prediction model bundle is missing. Run scripts/train_ai4i_model.py explicitly.')
 
     def train(self) -> ModelBundle:
         if not self.csv_path.exists():
@@ -207,7 +203,7 @@ class PredictionService:
         return list(dict.fromkeys(actions))[:7]
 
     def predict(self, data: ProcessData) -> PredictionResponse:
-        bundle = self.load_or_train()
+        bundle = self.load_bundle()
         X = self._to_df(data)
         failure_probability = self._positive_probability(bundle.failure_model, X)
         predicted_failure = failure_probability >= 0.5

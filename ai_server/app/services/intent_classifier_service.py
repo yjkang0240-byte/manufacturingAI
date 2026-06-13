@@ -5,7 +5,7 @@ from typing import Any, Callable, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from app.prompts.intent_classifier_prompt import INTENT_CLASSIFIER_SYSTEM_PROMPT
-from app.schemas import LLMUsageRecord
+from app.schemas.agent import LLMUsageRecord
 from app.services.llm_service import LLMService
 from app.services.structured_output_schema import to_openai_strict_json_schema
 
@@ -13,15 +13,12 @@ from app.services.structured_output_schema import to_openai_strict_json_schema
 SelectedPath = Literal[
     'fast_concept_answer',
     'general_lightweight_answer',
-    'lightweight_rag_answer',
     'supervisor_planning',
-    'report_answer',
     'meta_feedback',
     'unsupported_or_clarification',
     'recommended_action_recap',
     'recommended_action_item_explanation',
     'safety_answer',
-    'rag_answer',
     'heavy_analysis_answer',
 ]
 
@@ -33,7 +30,6 @@ AnswerType = Literal[
     'chart_guidance',
     'explanation',
     'diagnosis',
-    'report',
     'clarification',
     'meta_feedback',
     'recommended_action_recap',
@@ -45,7 +41,6 @@ ReferenceType = Literal[
     'process_data',
     'previous_answer_claim',
     'previous_recommended_action',
-    'report',
     'document',
     'none',
 ]
@@ -104,7 +99,6 @@ class IntentClassifierOutput(BaseModel):
     requires_prediction: bool = False
     requires_rag: bool = False
     requires_safety: bool = False
-    requires_report: bool = False
     focus_update_policy: FocusUpdatePolicy = 'preserve'
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str

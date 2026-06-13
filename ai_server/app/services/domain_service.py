@@ -6,18 +6,18 @@ import re
 import yaml
 
 from app.config import DOMAIN_DIR
-from app.schemas import (
+from app.schemas.agent import AgentRequest
+from app.schemas.domain import (
     ActionStep,
-    AgentRequest,
     AssetContext,
     FailureModeDetail,
     ManufacturingContext,
-    PredictionResponse,
     ProcessCondition,
     RiskAssessment,
     RiskAxis,
     SafetyGateResult,
 )
+from app.schemas.prediction import PredictionResponse
 
 TOKEN_RE = re.compile(r'[가-힣A-Za-z0-9_+.-]+')
 
@@ -75,7 +75,7 @@ class DomainKnowledgeService:
     def _blob(req: AgentRequest) -> str:
         parts = [req.question or '', req.inspection_notes or '']
         if req.process_data:
-            parts += ['공정 데이터', '토크', '공구 마모', '회전수', '온도', 'CNC']
+            parts += ['공정 데이터', '토크', '공구 마모', '회전수', '온도']
         return ' '.join(parts).lower()
 
     def build_context(self, req: AgentRequest, prediction: PredictionResponse | None, doc_count: int = 0) -> ManufacturingContext:
@@ -86,7 +86,7 @@ class DomainKnowledgeService:
         safety_gates = self.select_safety_gates(req, asset, process_conditions, failure_modes, risk)
         actions = self.plan_actions(req, prediction, asset, process_conditions, failure_modes, safety_gates)
         search_terms = self.document_search_terms(asset, process_conditions, failure_modes, safety_gates, actions)
-        audit_notes = self.audit_notes(req, risk, safety_gates)
+        audit_notes = self.audit_notes(req, risk, safety_gates, prediction)
         return ManufacturingContext(
             asset_context=asset,
             process_conditions=process_conditions,
@@ -110,8 +110,6 @@ class DomainKnowledgeService:
         for eq_name, eq in equipment_config.items():
             aliases = [str(a).lower() for a in eq.get('aliases', [])]
             score = sum(1 for a in aliases if a and a in blob)
-            if req.process_data and eq_name == 'CNC':
-                score += 2
             subsystems = eq.get('subsystems') or {}
             subs_for_eq: list[str] = []
             comps_for_eq: list[str] = []
@@ -138,7 +136,7 @@ class DomainKnowledgeService:
 
         label = 'CNC 계열 설비' if best_equipment == 'CNC' else '일반 산업 설비'
         confidence = min(0.95, 0.35 + 0.12 * best_score + (0.2 if req.process_data else 0.0))
-        rationale = '공정 데이터가 있어 CNC 계열 설비로 우선 추정했습니다.' if req.process_data and best_equipment == 'CNC' else '질문 키워드와 설비 taxonomy를 기반으로 설비 범위를 추정했습니다.'
+        rationale = '질문 키워드와 설비 taxonomy를 기반으로 설비 범위를 추정했습니다.'
         return AssetContext(
             equipment_type=best_equipment,
             equipment_label_ko=label,
@@ -221,21 +219,48 @@ class DomainKnowledgeService:
         quality_level = {'critical': 'critical', 'warning': 'high', 'caution': 'medium', 'normal': 'low'}.get(pred_level, 'unknown')
         equipment_level = 'high' if failure_modes and any(f.code in {'OSF', 'PWF', 'HDF'} for f in failure_modes) else 'medium' if failure_modes else 'low'
         blob = self._blob(req)
-        safety_level = 'critical' if any(w in blob for w in EMERGENCY_WORDS) else 'high' if any(w in blob for w in MAINTENANCE_WORDS) or any(h in asset.hazards for h in ['rotating_parts', 'electrical']) else 'medium' if '안전' in blob else 'low'
+        emergency = self._has_emergency_intent(blob)
+        maintenance_requested = any(w in blob for w in MAINTENANCE_WORDS) or bool(req.inspection_notes)
+        physical_maintenance = any(w in blob for w in ['교체', '분해', '수리', '정비', '커버', '접근', 'replace', 'repair', 'disassemble'])
+        hazardous_access = any(h in asset.hazards for h in ['rotating_parts', 'pinch_point', 'electrical', 'machine_guarding', 'emergency_stop'])
+        safety_level = (
+            'critical' if emergency
+            else 'high' if physical_maintenance and hazardous_access
+            else 'medium' if maintenance_requested or hazardous_access or '안전' in blob
+            else 'low'
+        )
         production_level = 'high' if quality_level in {'critical', 'high'} and equipment_level in {'high', 'critical'} else 'medium' if failure_modes else 'low'
         doc_level = 'high' if doc_count >= 3 else 'medium' if doc_count >= 1 else 'unknown'
-        order = {'unknown': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
-        overall = max([quality_level, equipment_level, safety_level, production_level], key=lambda x: order.get(x, 0))
-        escalation = overall in {'high', 'critical'} or safety_level in {'high', 'critical'}
+        if prediction is None:
+            quality_level = 'not_applicable'
+        order = {'not_applicable': 0, 'unknown': 0, 'low': 1, 'conditional': 2, 'medium': 2, 'high': 3, 'critical': 4}
+        operation_overall = max([quality_level, equipment_level, production_level], key=lambda x: order.get(x, 0))
+        if emergency or operation_overall in {'high', 'critical'}:
+            overall = max([operation_overall, safety_level], key=lambda x: order.get(x, 0))
+        elif safety_level == 'high':
+            overall = 'medium'
+        else:
+            overall = max([operation_overall, safety_level], key=lambda x: order.get(x, 0))
+        escalation = emergency or operation_overall in {'high', 'critical'} or (safety_level == 'high' and physical_maintenance)
         return RiskAssessment(
-            quality=RiskAxis(axis='quality', level=quality_level, rationale='AI4I 예측 위험도를 품질 위험으로 변환했습니다.'),
+            quality=RiskAxis(axis='quality', level=quality_level, rationale='AI4I 예측이 있을 때만 품질 위험으로 변환합니다.'),
             equipment=RiskAxis(axis='equipment', level=equipment_level, rationale='고장모드와 설비 하위 시스템 영향을 기준으로 산정했습니다.'),
-            safety=RiskAxis(axis='safety', level=safety_level, rationale='정비/비상/회전부/전기 위험 키워드와 설비 hazard를 기준으로 산정했습니다.'),
+            safety=RiskAxis(axis='safety', level=safety_level, rationale='현재 운전 위험과 분리해, 공구 교체·분해·회전부 접근 등 물리 작업이 필요한 경우의 절차 위험을 산정했습니다.'),
             production=RiskAxis(axis='production', level=production_level, rationale='품질 위험과 설비 위험이 생산 중단 가능성으로 이어질 수 있는지 평가했습니다.'),
             document_confidence=RiskAxis(axis='document_confidence', level=doc_level, rationale='검색된 근거 문서 수를 기준으로 산정했습니다.'),
+            prediction_risk=RiskAxis(
+                axis='prediction_risk',
+                level='not_applicable' if prediction is None else quality_level,
+                rationale='AI4I 예측 결과가 없으면 prediction risk는 적용하지 않습니다.',
+            ),
+            safety_work_risk=RiskAxis(
+                axis='safety_work_risk',
+                level='conditional' if physical_maintenance or hazardous_access else 'low',
+                rationale='물리 작업, 커버 개방, 회전부 접근이 필요한 경우에만 절차 위험이 있습니다.',
+            ),
             overall_priority=overall,
             escalation_required=escalation,
-            rationale='품질·설비·안전·생산 위험 축을 분리해 종합 우선순위를 산정했습니다.',
+            rationale='현재 운전 위험, AI4I 예측 위험, 물리 정비 작업 시 안전 절차 위험을 분리해 종합 우선순위를 산정했습니다.',
         )
 
     def select_safety_gates(self, req: AgentRequest, asset: AssetContext, conditions: list[ProcessCondition], failure_modes: list[FailureModeDetail], risk: RiskAssessment) -> list[SafetyGateResult]:
@@ -243,18 +268,26 @@ class DomainKnowledgeService:
         blob = self._blob(req)
         tags = {c.tag for c in conditions}
         tags.update(f.code for f in failure_modes)
+        physical_work = self._gate_triggered(matrix.get('loto_if_physical_maintenance') or {}, blob, tags) or bool(req.inspection_notes)
+        rotating_work = self._gate_triggered(matrix.get('rotating_parts_guard_check') or {}, blob, tags)
         gate_ids: list[str] = []
         for f in failure_modes:
             gate_ids.extend(f.safety_gates)
-        if any(w in blob for w in MAINTENANCE_WORDS) or req.inspection_notes:
+        if physical_work:
             gate_ids.append('loto_if_physical_maintenance')
-        if any(h in asset.hazards for h in ['rotating_parts', 'pinch_point']) or any(t in tags for t in ['OSF', 'TWF', 'rpm_high', 'rpm_low']):
+        if (
+            rotating_work
+            or
+            any(h in asset.hazards for h in ['rotating_parts', 'pinch_point'])
+            or any(t in tags for t in ['OSF', 'TWF', 'rpm_high', 'rpm_low'])
+            or (physical_work and rotating_work)
+        ):
             gate_ids.append('rotating_parts_guard_check')
         if any(t in tags for t in ['HDF', 'air_temperature_high', 'process_temperature_high']) or any(w in blob for w in ['고온', '냉각', '방열']):
             gate_ids.append('hot_surface_warning')
         if any(t in tags for t in ['PWF']) or any(w in blob for w in ['전기', '제어반', '드라이브', 'power', 'electrical']):
             gate_ids.append('electrical_isolation_check')
-        if any(w in blob for w in EMERGENCY_WORDS):
+        if self._has_emergency_intent(blob):
             gate_ids.append('emergency_response')
         if any(f.code == 'RNF' for f in failure_modes):
             gate_ids.append('authorized_person_review')
@@ -276,8 +309,17 @@ class DomainKnowledgeService:
                 forbidden_agent_actions=g.get('forbidden_agent_actions', []) or [],
                 escalation=g.get('escalation'),
                 triggered_by=triggered or list(tags & set(g.get('triggers') or [])),
+                document_search_terms=g.get('document_search_terms', []) or [],
             ))
         return results
+
+    @staticmethod
+    def _gate_triggered(gate: dict[str, Any], blob: str, tags: set[str]) -> bool:
+        for trigger in gate.get('triggers') or []:
+            text = str(trigger).lower()
+            if text in blob or str(trigger) in tags:
+                return True
+        return False
 
     def plan_actions(self, req: AgentRequest, prediction: PredictionResponse | None, asset: AssetContext, conditions: list[ProcessCondition], failure_modes: list[FailureModeDetail], safety_gates: list[SafetyGateResult]) -> list[ActionStep]:
         action_config = (self.action_catalog.get('actions') or {})
@@ -352,21 +394,32 @@ class DomainKnowledgeService:
             terms.extend([f.code, f.name_ko])
             terms.extend(f.recommended_checks[:3])
         for g in safety_gates:
-            terms.extend([g.name_ko, g.gate_id])
+            terms.append(g.name_ko)
+            terms.extend(g.document_search_terms[:8])
         for a in actions:
             terms.append(a.label_ko)
         terms.extend(['troubleshooting', 'preventive maintenance', 'safety procedure'])
         return [t for t in dict.fromkeys(str(x) for x in terms if x)][:30]
 
-    def audit_notes(self, req: AgentRequest, risk: RiskAssessment, safety_gates: list[SafetyGateResult]) -> list[str]:
-        notes = ['Agent는 설비 제어, 안전 보증, 법적 판단을 수행하지 않습니다.']
+    def audit_notes(self, req: AgentRequest, risk: RiskAssessment, safety_gates: list[SafetyGateResult], prediction: PredictionResponse | None = None) -> list[str]:
+        if prediction:
+            notes = ['이 답변은 AI4I 예측과 문서 근거 기반 점검 보조이며 실제 설비 제어·자동 정지·법적 안전 판단을 대체하지 않습니다.']
+        else:
+            notes = ['이 답변은 문서 근거 기반 안전 점검 보조이며, 실제 설비 제어·자동 정지·법적 안전 판단을 대체하지 않습니다. 물리적 정비, 커버 개방, 회전부 접근이 필요한 경우에는 현장 절차와 자격 있는 담당자 확인이 우선입니다.']
         if safety_gates:
-            notes.append('안전 게이트가 존재하므로 답변에는 필수 확인 사항과 금지 사항이 포함되어야 합니다.')
+            notes.append('공구 교체, 커버 개방, 회전부 접근 등 물리 작업이 필요한 경우에만 현장 LOTO/방호 절차를 적용하세요.')
         if risk.escalation_required:
-            notes.append('종합 위험도가 높아 담당자 또는 안전관리자 검토가 필요합니다.')
-        if req.generate_report or req.inspection_notes:
-            notes.append('보고서 초안은 실제 현장 기준과 사내 양식에 맞게 검토되어야 합니다.')
+            notes.append('물리적 정비나 교체가 필요하면 자격 있는 담당자 또는 안전관리자 확인이 필요합니다.')
         return notes
+
+    @staticmethod
+    def _has_emergency_intent(blob: str) -> bool:
+        compact = blob.replace(' ', '')
+        if '비상정지' in compact or 'emergencystop' in compact or 'e-stop' in blob:
+            compact = compact.replace('비상정지', '')
+            blob = blob.replace('emergency stop', '').replace('e-stop', '')
+        emergency_terms = ['화재', '누출', '부상', '대피', 'emergency', 'fire', 'evacuation']
+        return any(term in blob for term in emergency_terms) or '비상상황' in compact
 
     @staticmethod
     def _normalize_level(level: Any) -> str:

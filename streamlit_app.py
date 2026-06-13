@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -10,6 +12,14 @@ import streamlit as st
 
 DEFAULT_API_BASE_URL = os.getenv('AI_SERVER_BASE_URL', 'http://localhost:8000')
 DEFAULT_USD_KRW_EXCHANGE_RATE = float(os.getenv('USD_KRW_EXCHANGE_RATE', '1400'))
+PROJECT_ROOT = Path(__file__).resolve().parent
+AI_SERVER_DIR = PROJECT_ROOT / 'ai_server'
+RAG_PROCESSED_DIR = AI_SERVER_DIR / 'data' / 'processed'
+RAG_CHUNKS_PATH = RAG_PROCESSED_DIR / 'rag_chunks.jsonl'
+RAG_DOCUMENTS_PATH = RAG_PROCESSED_DIR / 'rag_documents.jsonl'
+RAG_CORPUS_REPORT_PATH = RAG_PROCESSED_DIR / 'rag_corpus_report.md'
+RAG_PIPELINE_SUMMARY_PATH = RAG_PROCESSED_DIR / 'rag_pipeline_summary.json'
+CHROMA_DIR = AI_SERVER_DIR / 'data' / 'vector_db' / 'chroma'
 
 
 st.set_page_config(page_title='Manufacturing AI Agent Tester', layout='wide')
@@ -33,6 +43,79 @@ def request_json(method: str, path: str, *, payload: dict[str, Any] | None = Non
     except ValueError:
         body = response.text
     return response.status_code, body
+
+
+@st.cache_data(show_spinner=False)
+def read_jsonl_file(path: str) -> list[dict[str, Any]]:
+    file_path = Path(path)
+    if not file_path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in file_path.read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+@st.cache_data(show_spinner=False)
+def read_json_file(path: str) -> dict[str, Any]:
+    file_path = Path(path)
+    if not file_path.exists():
+        return {}
+    try:
+        data = json.loads(file_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@st.cache_data(show_spinner=False)
+def read_text_file(path: str) -> str:
+    file_path = Path(path)
+    if not file_path.exists():
+        return ''
+    return file_path.read_text(encoding='utf-8')
+
+
+def file_status(path: Path) -> dict[str, Any]:
+    exists = path.exists()
+    return {
+        'file': str(path.relative_to(PROJECT_ROOT) if path.is_absolute() else path),
+        'exists': exists,
+        'size_kb': round(path.stat().st_size / 1024, 1) if exists and path.is_file() else None,
+        'type': 'dir' if exists and path.is_dir() else 'file',
+    }
+
+
+def counter_rows(rows: list[dict[str, Any]], key: str, *, split_csv: bool = False) -> list[dict[str, Any]]:
+    counter: Counter[str] = Counter()
+    for row in rows:
+        value = row.get(key)
+        values: list[Any]
+        if split_csv and isinstance(value, str):
+            values = [item.strip() for item in value.replace(';', ',').split(',') if item.strip()]
+        elif isinstance(value, list):
+            values = value
+        else:
+            values = [value]
+        for item in values:
+            label = str(item or 'unknown').strip() or 'unknown'
+            counter[label] += 1
+    return [{'value': value, 'count': count} for value, count in counter.most_common()]
+
+
+def render_counter_table(title: str, rows: list[dict[str, Any]]) -> None:
+    st.markdown(f'**{title}**')
+    if rows:
+        st.dataframe(rows, width='stretch', hide_index=True)
+    else:
+        st.caption('데이터 없음')
 
 
 def load_model_options() -> list[dict[str, Any]]:
@@ -65,6 +148,9 @@ def model_label(model_info: dict[str, Any]) -> str:
 
 
 def format_run_usage_summary(body: dict[str, Any]) -> str:
+    if body.get('error'):
+        error = body.get('error') or {}
+        return f'LLM/Agent 오류: {error.get("message") or error.get("code") or "unknown"}'
     usage = body.get('llm_usage') or {}
     calls = usage.get('calls', 0)
     replan_count = usage.get('replan_count', 0)
@@ -81,6 +167,11 @@ def format_run_usage_summary(body: dict[str, Any]) -> str:
 
 
 def render_usage_metrics(body: dict[str, Any]) -> None:
+    if body.get('error'):
+        error = body.get('error') or {}
+        st.markdown('**이번 응답 Usage**')
+        st.error(error.get('message') or error.get('code') or 'Agent 실행 실패')
+        return
     usage = body.get('llm_usage') or {}
     calls = usage.get('calls', 0)
     replan_count = usage.get('replan_count', 0)
@@ -267,7 +358,7 @@ def render_usage_dashboard(records: list[dict[str, Any]]) -> None:
     col9.metric('Cost USD', f'${summary["estimated_cost_usd"]:.6f}')
     col10.metric('Cost KRW', f'₩{summary["estimated_cost_krw"]:,.0f}')
     with st.expander('Usage by model', expanded=True):
-        st.dataframe(list(summary['by_model'].values()), use_container_width=True)
+        st.dataframe(list(summary['by_model'].values()), width='stretch')
     with st.expander('Raw usage rows'):
         st.json([
             {
@@ -308,10 +399,16 @@ def run_agent_with_progress(payload: dict[str, Any]) -> tuple[int, Any]:
                     completed_steps.append(step)
                     current_step = step.get('step') or 'Agent'
                     current_detail = step.get('detail') or ''
+                    current_status = trace_status_label(current_detail)
                     status_box.update(label=f'Agent 실행 중: {current_step}', state='running')
                     progress.progress(min(len(completed_steps) / 16, 0.98))
                     step_text.markdown(render_realtime_trace(completed_steps, planned_nodes))
-                    detail_box.info(current_detail)
+                    if current_status == '실패':
+                        detail_box.error(current_detail)
+                    elif current_status == '건너뜀':
+                        detail_box.warning(current_detail)
+                    else:
+                        detail_box.info(current_detail)
                 elif event_type == 'final':
                     final_body = event.get('response')
                     progress.progress(1.0)
@@ -349,7 +446,8 @@ def render_realtime_trace(completed_steps: list[dict[str, str]], planned_nodes: 
     completed_names = [step.get('step') or '' for step in completed_steps]
     lines: list[str] = []
     for idx, step in enumerate(completed_steps, 1):
-        lines.append(f'{idx}. `완료` **{step.get("step", "Agent")}**  \n   {step.get("detail", "")}')
+        detail = step.get('detail', '')
+        lines.append(f'{idx}. `{trace_status_label(detail)}` **{step.get("step", "Agent")}**  \n   {detail}')
     remaining = [node for node in planned_nodes if node not in completed_names]
     if remaining and not completed:
         lines.append('')
@@ -357,6 +455,17 @@ def render_realtime_trace(completed_steps: list[dict[str, str]], planned_nodes: 
         for node in remaining[:8]:
             lines.append(f'- `대기` {node}')
     return '\n'.join(lines) or 'Agent 실행 대기 중'
+
+
+def trace_status_label(detail: str) -> str:
+    lowered = (detail or '').lower()
+    if 'status=failed' in lowered or 'status=error' in lowered or 'error=' in lowered:
+        return '실패'
+    if 'status=skipped' in lowered:
+        return '건너뜀'
+    if 'status=running' in lowered:
+        return '진행 중'
+    return '완료'
 
 
 def process_data_form(prefix: str = 'agent') -> dict[str, Any]:
@@ -390,7 +499,7 @@ st.title('Manufacturing AI Agent Tester')
 with st.sidebar:
     st.text_input('API base URL', key='api_base_url')
     st.text_input('API key', key='api_key', type='password')
-    if st.button('Health check', use_container_width=True):
+    if st.button('Health check', width='stretch'):
         status, body = request_json('GET', '/health')
         st.session_state.health_result = {'status': status, 'body': body}
     if 'health_result' in st.session_state:
@@ -409,7 +518,7 @@ with st.sidebar:
         st.session_state.selected_user = chosen
         st.session_state.selected_user_id = chosen['user_id']
         st.caption(f'role={chosen.get("role") or "-"} / dept={chosen.get("department") or "-"}')
-        if st.button('Delete selected user', use_container_width=True):
+        if st.button('Delete selected user', width='stretch'):
             status, body = request_json('DELETE', f'/users/{chosen["user_id"]}?mode=hard')
             st.session_state.user_action_result = {'status': status, 'body': body}
             st.session_state.pop('selected_user', None)
@@ -422,7 +531,7 @@ with st.sidebar:
         new_name = st.text_input('Display name', value='Maintenance Engineer')
         new_role = st.text_input('Role', value='maintenance_engineer')
         new_department = st.text_input('Department', value='plant_1')
-        if st.button('Create user', use_container_width=True):
+        if st.button('Create user', width='stretch'):
             payload = {
                 'display_name': new_name,
                 'role': new_role or None,
@@ -451,12 +560,10 @@ with tabs[0]:
     include_process_data = st.checkbox('공정 데이터 포함', value=True)
     process_data = process_data_form('agent') if include_process_data else None
     inspection_notes = st.text_area('Inspection notes', value='', height=80)
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        generate_report = st.checkbox('보고서 생성', value=True)
+        mode = st.selectbox('Mode', ['auto', 'prediction', 'knowledge_qa', 'safety_ops', 'hybrid'])
     with col2:
-        mode = st.selectbox('Mode', ['auto', 'prediction', 'knowledge_qa', 'safety_ops', 'documentation', 'hybrid'])
-    with col3:
         top_k = st.number_input('Top K', min_value=1, max_value=20, value=5)
 
     selected_llm_model = None
@@ -487,7 +594,6 @@ with tabs[0]:
         'message': message,
         'process_data': process_data,
         'inspection_notes': inspection_notes or None,
-        'generate_report': generate_report,
         'top_k': top_k,
         'mode': mode,
     }
@@ -525,11 +631,13 @@ with tabs[0]:
                 st.json(body.get('prediction'))
             with st.expander('근거 문서'):
                 st.json(body.get('retrieved_documents'))
-            with st.expander('보고서'):
-                st.markdown(body.get('report') or '보고서 없음')
             with st.expander('사용된 User Context'):
                 st.json(body.get('context_used'))
             with st.expander('Raw response'):
+                st.json(body)
+        elif isinstance(body, dict) and body.get('error'):
+            render_usage_metrics(body)
+            with st.expander('Raw error'):
                 st.json(body)
         else:
             st.json(body)
@@ -589,15 +697,116 @@ with tabs[3]:
         st.json(st.session_state.prediction_result['body'])
 
 with tabs[4]:
-    st.subheader('RAG 검색')
-    query = st.text_input('Query', value='CNC spindle LOTO rotating parts guard maintenance')
-    rag_top_k = st.number_input('RAG Top K', min_value=1, max_value=20, value=5)
-    if st.button('Search documents'):
-        status, body = request_json('POST', '/rag/search', payload={'query': query, 'top_k': rag_top_k})
-        st.session_state.rag_result = {'status': status, 'body': body}
-    if 'rag_result' in st.session_state:
-        st.caption(f'HTTP {st.session_state.rag_result["status"]}')
-        st.json(st.session_state.rag_result['body'])
+    st.subheader('RAG Corpus / Chroma 확인')
+    st.caption('다운로드/재수집/재색인은 하지 않고, 현재 정리된 JSONL corpus와 Chroma runtime 상태만 읽어서 보여줍니다.')
+
+    chunks = read_jsonl_file(str(RAG_CHUNKS_PATH))
+    documents = read_jsonl_file(str(RAG_DOCUMENTS_PATH))
+    pipeline_summary = read_json_file(str(RAG_PIPELINE_SUMMARY_PATH))
+    corpus_report = read_text_file(str(RAG_CORPUS_REPORT_PATH))
+
+    status, health_body = request_json('GET', '/health')
+    health = health_body if status == 200 and isinstance(health_body, dict) else {}
+    chroma_count = health.get('rag_chunks')
+    jsonl_count = len(chunks)
+    mismatch = chroma_count is not None and jsonl_count != int(chroma_count or 0)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric('RAG documents JSONL', len(documents))
+    col2.metric('RAG chunks JSONL', jsonl_count)
+    col3.metric('Chroma vectors', chroma_count if chroma_count is not None else '-')
+    col4.metric('RAG backend', health.get('rag_backend') or '-')
+    if mismatch:
+        st.warning(f'JSONL chunk count({jsonl_count})와 Chroma count({chroma_count})가 다릅니다. runbook 기준으로 재색인을 확인하세요.')
+    elif jsonl_count and chroma_count:
+        st.success('JSONL chunk count와 Chroma vector count가 일치합니다.')
+
+    rag_tabs = st.tabs(['파일 상태', '분포/메타데이터', '검색 확인', 'Corpus report'])
+    with rag_tabs[0]:
+        st.markdown('**RAG 파일 / 디렉터리**')
+        st.dataframe([
+            file_status(RAG_DOCUMENTS_PATH),
+            file_status(RAG_CHUNKS_PATH),
+            file_status(RAG_CORPUS_REPORT_PATH),
+            file_status(RAG_PIPELINE_SUMMARY_PATH),
+            file_status(CHROMA_DIR),
+        ], width='stretch', hide_index=True)
+        st.markdown('**Pipeline summary**')
+        st.json(pipeline_summary or {'message': 'rag_pipeline_summary.json 없음'})
+        st.markdown('**Health response**')
+        st.json(health_body)
+
+    with rag_tabs[1]:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            render_counter_table('source별 chunk 수', counter_rows(chunks, 'source'))
+            render_counter_table('doc_type별 chunk 수', counter_rows(chunks, 'doc_type'))
+            render_counter_table('project_priority별 chunk 수', counter_rows(chunks, 'project_priority'))
+        with col_b:
+            render_counter_table('retrieval_scope별 chunk 수', counter_rows(chunks, 'retrieval_scope'))
+            render_counter_table('safety_gate별 chunk 수', counter_rows(chunks, 'safety_gate'))
+            render_counter_table('failure_modes별 chunk 수', counter_rows(chunks, 'failure_modes', split_csv=True))
+        with st.expander('Chunk 샘플 보기', expanded=False):
+            sample_rows = [
+                {
+                    'chunk_id': row.get('chunk_id'),
+                    'source': row.get('source'),
+                    'title': row.get('title') or row.get('document_title'),
+                    'doc_type': row.get('doc_type'),
+                    'safety_gate': row.get('safety_gate'),
+                    'failure_modes': row.get('failure_modes'),
+                    'related_signals': row.get('related_signals'),
+                    'project_priority': row.get('project_priority'),
+                    'retrieval_scope': row.get('retrieval_scope'),
+                }
+                for row in chunks[:50]
+            ]
+            st.dataframe(sample_rows, width='stretch', hide_index=True)
+
+    with rag_tabs[2]:
+        st.markdown('**/rag/search smoke test**')
+        query = st.text_input('Query', value='Haas spindle load tool wear troubleshooting torque')
+        rag_top_k = st.number_input('RAG Top K', min_value=1, max_value=20, value=5)
+        col_search, col_sample = st.columns(2)
+        with col_search:
+            if st.button('Search documents'):
+                status, body = request_json('POST', '/rag/search', payload={'query': query, 'top_k': rag_top_k})
+                st.session_state.rag_result = {'status': status, 'body': body}
+        with col_sample:
+            if st.button('Run Haas recovery check'):
+                status, body = request_json('POST', '/rag/search', payload={
+                    'query': 'Haas spindle load tool wear troubleshooting torque',
+                    'top_k': 3,
+                })
+                st.session_state.rag_result = {'status': status, 'body': body}
+        if 'rag_result' in st.session_state:
+            st.caption(f'HTTP {st.session_state.rag_result["status"]}')
+            body = st.session_state.rag_result['body']
+            if isinstance(body, list):
+                summary_rows = [
+                    {
+                        'chunk_id': item.get('chunk_id'),
+                        'source': item.get('source'),
+                        'title': item.get('title') or item.get('document_title'),
+                        'doc_type': item.get('doc_type'),
+                        'safety_gate': item.get('safety_gate'),
+                        'failure_modes': item.get('failure_modes'),
+                        'related_signals': item.get('related_signals'),
+                        'score': item.get('score'),
+                    }
+                    for item in body
+                ]
+                st.dataframe(summary_rows, width='stretch', hide_index=True)
+                with st.expander('Raw search response'):
+                    st.json(body)
+            else:
+                st.json(body)
+
+    with rag_tabs[3]:
+        if corpus_report:
+            st.markdown(corpus_report)
+        else:
+            st.info('rag_corpus_report.md 파일이 없습니다.')
 
 with tabs[5]:
     st.subheader('History')

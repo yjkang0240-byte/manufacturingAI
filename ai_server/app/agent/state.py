@@ -3,21 +3,22 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 from typing_extensions import NotRequired, TypedDict
 
-from app.schemas import AgentPlan, AgentRequest, AgentResponse, AgentSendRequest, LLMUsageRecord, ManufacturingContext, PredictionResponse, RagChunk
+from app.schemas.agent import AgentPlan, AgentRequest, AgentResponse, AgentSendRequest, LLMUsageRecord
+from app.schemas.domain import ManufacturingContext
+from app.schemas.prediction import PredictionResponse
+from app.schemas.rag import RagChunk
 
 
 SelectedPath = Literal[
     'fast_concept_answer',
     'general_lightweight_answer',
-    'lightweight_rag_answer',
     'unsupported_or_clarification',
+    'ai4i_clarification_required',
     'meta_feedback',
-    'report_answer',
     'supervisor_planning',
     'recommended_action_recap',
     'recommended_action_item_explanation',
     'safety_answer',
-    'rag_answer',
     'heavy_analysis_answer',
 ]
 
@@ -45,6 +46,7 @@ class AgentState(TypedDict):
     previous_turn_process_data: NotRequired[Optional[Dict[str, Any]]]
     session_last_process_data: NotRequired[Optional[Dict[str, Any]]]
     process_data_reference_policy: NotRequired[Dict[str, Any]]
+    ai4i_feature_status: NotRequired[Dict[str, Any]]
     intent_gateway: NotRequired[Dict[str, Any]]
     selected_path: NotRequired[SelectedPath]
     answer_type: NotRequired[str]
@@ -52,17 +54,22 @@ class AgentState(TypedDict):
     formatter_context: NotRequired[Dict[str, Any]]
     safety_context: NotRequired[Dict[str, Any]]
     plan: NotRequired[AgentPlan]
+    diagnostic_plan: NotRequired[Dict[str, Any]]
     route: NotRequired[List[str]]
     prediction: NotRequired[Optional[PredictionResponse]]
     manufacturing_context: NotRequired[ManufacturingContext]
+    rag_evidence: NotRequired[Dict[str, Any]]
+    evidence_grade: NotRequired[Dict[str, Any]]
     retrieved_documents: NotRequired[List[RagChunk]]
     safety_guidance: NotRequired[Optional[str]]
+    safety_warnings: NotRequired[List[str]]
     answer: NotRequired[str]
     report: NotRequired[Optional[str]]
     citations: NotRequired[List[Dict[str, Any]]]
     llm_used: NotRequired[bool]
     llm_error: NotRequired[Optional[str]]
     response: NotRequired[AgentResponse]
+    memory_diagnostics: NotRequired[Dict[str, Any]]
     warnings: List[str]
     errors: List[Dict[str, Any]]
     usage_records: List[LLMUsageRecord]

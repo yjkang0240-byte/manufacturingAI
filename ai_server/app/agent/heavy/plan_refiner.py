@@ -4,7 +4,7 @@ from typing import Callable
 
 from app.agent.heavy.diagnostic_planner import DiagnosticPlan
 from app.agent.heavy.plan_translator import DiagnosticPlanToAgentPlanTranslator
-from app.schemas import AgentPlan, AgentRequest, LLMUsageRecord
+from app.schemas.agent import AgentPlan, AgentRequest, LLMUsageRecord
 from app.services.llm_service import LLMService, PLAN_SCHEMA
 
 
@@ -27,7 +27,6 @@ class PlanRefiner:
             'question': request.question,
             'has_process_data': request.process_data is not None,
             'has_inspection_notes': bool(request.inspection_notes),
-            'generate_report': request.generate_report,
             'requested_mode': request.mode,
             'diagnostic_plan': diagnostic_plan.model_dump(),
             'base_plan': base_plan.model_dump(),
@@ -39,7 +38,8 @@ class PlanRefiner:
         }
         system = (
             '당신은 제조 AI 시스템의 Manufacturing Planner입니다. '
-            '이미 구조화된 diagnostic_plan을 참고해 prediction, RAG, safety, report 필요 여부를 JSON으로 조정하세요. '
+            '이미 구조화된 diagnostic_plan을 참고해 prediction, RAG, safety 필요 여부를 JSON으로 조정하세요. '
+            '별도 report 실행 경로는 사용하지 않으며, 보고서 형식 요청은 answer 본문 스타일로만 처리합니다. '
             'process_data가 있으면 prediction_required=true를 유지하고, 물리 점검/정비가 있으면 safety_gate_required=true를 유지해야 합니다.'
         )
         data = self.llm_service.generate_json(
@@ -55,9 +55,8 @@ class PlanRefiner:
             return None
         refined_diagnostic = diagnostic_plan.model_copy(update={
             'requires_prediction': diagnostic_plan.requires_prediction or bool(data.get('prediction_required')),
-            'requires_rag': diagnostic_plan.requires_rag or bool(data.get('rag_required')) or bool(data.get('safety_required')) or bool(data.get('report_required')),
+            'requires_rag': diagnostic_plan.requires_rag or bool(data.get('rag_required')) or bool(data.get('safety_required')),
             'requires_safety': diagnostic_plan.requires_safety or bool(data.get('safety_required')),
-            'requires_report': diagnostic_plan.requires_report or bool(data.get('report_required')),
             'requires_asset_context': True,
             'requires_process_condition': diagnostic_plan.requires_process_condition or (bool(data.get('prediction_required')) and bool(request.process_data)),
             'requires_failure_mode': diagnostic_plan.requires_failure_mode or bool(data.get('prediction_required')),
@@ -69,4 +68,3 @@ class PlanRefiner:
             'source': 'llm_refined',
         })
         return self.translator.translate(refined_diagnostic)
-

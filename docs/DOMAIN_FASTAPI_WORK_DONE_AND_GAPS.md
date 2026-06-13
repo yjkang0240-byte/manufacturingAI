@@ -38,7 +38,6 @@
 | `ai_server/app/services/supervisor_service.py` | 단순 키워드 router에서 Manufacturing Supervisor로 고도화 |
 | `ai_server/app/agent/graph.py` | 제조 업무 흐름 기반 실행 그래프 반영 |
 | `ai_server/app/schemas.py` | `AssetContext`, `ProcessCondition`, `FailureModeDetail`, `RiskAssessment`, `SafetyGateResult`, `ActionStep`, `ManufacturingContext` 추가 |
-| `ai_server/app/services/report_service.py` | 제조 context 기반 답변/보고서 생성 |
 | `ai_server/app/services/evaluation_service.py` | route correctness, safety gate compliance, scope control 등 제조 특화 평가 반영 |
 | `ai_server/app/main.py` | `/domain/catalog`, `/agent/plan` API 추가 |
 | `.env.example` | OpenAI LLM 필수 설정 정리 |
@@ -119,7 +118,7 @@ POST /agent/plan
 POST /agent/send
 ```
 
-권장 메인 API. 사용자 메시지, 공정 데이터, 점검 메모, 보고서 생성 여부를 받아 제조 Agent 실행 결과를 반환한다.
+권장 메인 API. 사용자 메시지, 공정 데이터, 점검 메모를 받아 제조 Agent 실행 결과를 반환한다.
 
 ---
 

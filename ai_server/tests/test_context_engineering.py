@@ -3,23 +3,30 @@ from __future__ import annotations
 import inspect
 import importlib.util
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 
 from app.agent.checkpointing import build_thread_id, reset_sqlite_checkpoint
-from app.agent.graph import ManufacturingAgentGraph
 from app.agent.root_graph import RootManufacturingGraph
 from app.agent.context import AnswerMemory, ContextCompressor, ContextPackBuilder, ContextResolver, ContextValidator, RecommendedAction
+from app.agent.context_subagent import ContextInput
 from app.agent.heavy import CitationBuilder, DiagnosticPlan, DiagnosticPlanToAgentPlanTranslator, DiagnosticPlanner, EvidenceGrader, PlanningResult, RagQueryPlanner
 from app.agent.formatters import FormatterRegistry
+from app.agent.memory_subagent import MemoryInput
+from app.agent.planning_subagent import PlanningInput
+from app.agent.planning_subagent import nodes as planning_nodes
 from app.agent.safety import SafetyContext, SafetyFormatter
-from app.schemas import AgentRequest, AgentSendRequest, RagChunk
-from app.services.answer_formatter_service import AnswerFormatterService
+from app.agent.safety_subagent import SafetyInput
+from app.schemas.agent import AgentRequest, AgentResponse, AgentSendRequest
+from app.schemas.prediction import FailureModeScore, PredictionResponse
+from app.schemas.rag import RagChunk
 from app.services.context_service import ContextService
+from app.services.domain_service import DomainKnowledgeService
 from app.services.intent_gateway_service import IntentGatewayService
 from app.services.memory_service import MemoryService
-from app.services.prediction_service import PredictionService
 from app.services.rag_service import RagService
+from app.services.safety_validation_service import SafetyValidationService
 from app.services.structured_output_schema import to_openai_strict_json_schema
 from app.services.supervisor_service import SupervisorService
 from app.services.user_service import UserService
@@ -36,17 +43,72 @@ class NoopLLMService:
         return None
 
 
-def make_root(tmp_path):
+class AnswerLLMService(NoopLLMService):
+    def generate_json(self, **kwargs):
+        if kwargs.get('operation') != 'answer_generation':
+            self.last_error = 'noop llm disabled'
+            return None
+        return {
+            'answer': (
+                '판정\n'
+                'AI4I 입력 기준 예측 결과를 확인했습니다.\n\n'
+                '안전 확인\n'
+                '전원 및 에너지원을 차단했는지 확인하고, 가드/인터록/방호장치 상태 확인 후 담당자가 점검해야 합니다.'
+            ),
+            'recommended_actions': ['공구 마모 상태 확인'],
+            'warnings': [],
+            'report': None,
+        }
+
+
+class FakePredictionService:
+    bundle = object()
+
+    def __init__(self):
+        self.calls = 0
+
+    def predict(self, process_data):
+        self.calls += 1
+        return PredictionResponse(
+            failure_probability=0.12,
+            predicted_failure=False,
+            risk_level='Normal',
+            failure_modes=[
+                FailureModeScore(code='TWF', name='Tool Wear Failure', probability=0.2, predicted=False),
+            ],
+            predicted_modes=[],
+            evidence_features=[],
+            recommended_actions=['공구 마모 상태 확인'],
+            model_source='fake',
+            disclaimer='test prediction',
+        )
+
+
+class CountingRagService:
+    def __init__(self):
+        self.calls = 0
+
+    def search_with_diagnostics(self, *args, **kwargs):
+        self.calls += 1
+        return {'chunks': [], 'diagnostics': {'backend': 'test', 'error': None}}
+
+    def corpus_health(self):
+        return {'backend': 'test', 'chroma_count': 0, 'error': None}
+
+
+def make_root(tmp_path, *, prediction_service=None, llm_service=None, rag_service=None):
     store = SQLiteStore(tmp_path / 'test.sqlite3')
     users = UserService(store)
-    rag = RagService()
-    llm = NoopLLMService()
+    rag = rag_service or RagService()
+    llm = llm_service or NoopLLMService()
     return RootManufacturingGraph(
         store=store,
         user_service=users,
         context_service=ContextService(store),
         memory_service=MemoryService(store),
-        heavy_graph=ManufacturingAgentGraph(PredictionService(model_path=tmp_path / 'model.joblib'), rag, llm),
+        prediction_service=prediction_service or FakePredictionService(),
+        domain_service=DomainKnowledgeService(),
+        safety_validator=SafetyValidationService(),
         llm_service=llm,
         rag_service=rag,
         checkpoint_path=tmp_path / 'checkpoints' / 'v2.sqlite3',
@@ -258,10 +320,10 @@ def test_safety_formatter_includes_must_include_constraints():
     assert 'AI가 안전 상태를 보증한다고 말하지 않기' in answer
 
 
-def test_fallback_formatter_uses_public_reason_only():
-    answer = AnswerFormatterService().unsupported_or_clarification(
-        reason='BadRequestError invalid_json_schema additionalProperties missing'
-    )
+def test_clarification_formatter_uses_public_reason_only():
+    answer = FormatterRegistry().format('clarification', {
+        'public_reason': RootManufacturingGraph._safe_public_reason('BadRequestError invalid_json_schema additionalProperties missing'),
+    })
 
     assert 'BadRequestError' not in answer
     assert 'invalid_json_schema' not in answer
@@ -420,18 +482,178 @@ def test_user_session_checkpoint_memory_isolation(tmp_path):
     root.close()
 
 
+def test_root_subagents_emit_typed_outputs(tmp_path):
+    root, users = make_root(tmp_path)
+    user = users.create({'display_name': 'SubAgent User'})
+    ctx = root.context_subagent.invoke(ContextInput(
+        send_request=AgentSendRequest(user_id=user['user_id'], session_id='s_sub', message='정비 전에 LOTO 확인해야 해?'),
+        session_id='s_sub',
+    ))
+    plan = root.planning_subagent.invoke(PlanningInput(
+        request=ctx.request,
+        context_resolution=ctx.context_resolution,
+        intent_gateway={'selected_path': 'supervisor_planning'},
+    ))
+    safety = root.safety_subagent.invoke(SafetyInput(
+        request=ctx.request,
+        manufacturing_context=DomainKnowledgeService().build_context(ctx.request, None, doc_count=0),
+    ))
+    response = AgentResponse(
+        run_id='run_sub',
+        user_id=user['user_id'],
+        session_id='s_sub',
+        route=plan.route,
+        answer='LOTO 확인과 담당자 점검이 필요합니다.',
+        manufacturing_context=safety.manufacturing_context,
+    )
+    memory = root.memory_subagent.invoke(MemoryInput(
+        request=ctx.request,
+        response=response,
+        answer_memory_context={'selected_path': 'supervisor_planning', 'structured_answer_payload': safety.structured_answer_payload},
+        user_id=user['user_id'],
+    ))
+
+    assert ctx.request.question
+    assert plan.plan.required_nodes
+    assert 'recommended_actions' in safety.structured_answer_payload
+    assert memory.last_answer_memory['short_summary']
+    root.close()
+
+
+def test_context_subagent_extracts_ai4i_process_data_from_message(tmp_path):
+    root, users = make_root(tmp_path)
+    user = users.create({'display_name': 'AI4I Text User'})
+
+    ctx = root.context_subagent.invoke(ContextInput(
+        send_request=AgentSendRequest(
+            user_id=user['user_id'],
+            session_id='s_ai4i_text',
+            message=(
+                'AI4I 데이터가 Type=M, Air temperature=300.2K, '
+                'Process temperature=309.0K, Rotational speed=1480rpm, '
+                'Torque=34Nm, Tool wear=235min일 때 공구 마모 고장 가능성을 예측해줘.'
+            ),
+        ),
+        session_id='s_ai4i_text',
+    ))
+
+    assert ctx.request.process_data is not None
+    assert ctx.request.process_data.type == 'M'
+    assert ctx.request.process_data.air_temperature_k == 300.2
+    assert ctx.request.process_data.process_temperature_k == 309.0
+    assert ctx.request.process_data.rotational_speed_rpm == 1480
+    assert ctx.request.process_data.torque_nm == 34.0
+    assert ctx.request.process_data.tool_wear_min == 235
+    assert ctx.ai4i_feature_status['status'] == 'complete'
+    root.close()
+
+
+def test_context_subagent_accepts_ai4i_aliases_and_celsius_units(tmp_path):
+    root, users = make_root(tmp_path)
+    user = users.create({'display_name': 'AI4I Alias User'})
+
+    ctx = root.context_subagent.invoke(ContextInput(
+        send_request=AgentSendRequest(
+            user_id=user['user_id'],
+            session_id='s_ai4i_alias',
+            message='제품유형 M, 공기온도=27C, 공정온도=36C, 회전수=1480rpm, 토크=34Nm, 공구 마모 시간=235min이면 예측해줘.',
+        ),
+        session_id='s_ai4i_alias',
+    ))
+
+    assert ctx.request.process_data is not None
+    assert ctx.request.process_data.type == 'M'
+    assert ctx.request.process_data.air_temperature_k == pytest.approx(300.15)
+    assert ctx.request.process_data.process_temperature_k == pytest.approx(309.15)
+    assert ctx.ai4i_feature_status['prediction_skip_reason'] is None
+    root.close()
+
+
+def test_ai4i_prediction_intent_with_missing_features_routes_to_clarification(tmp_path):
+    prediction = FakePredictionService()
+    rag = CountingRagService()
+    root, users = make_root(tmp_path, prediction_service=prediction, rag_service=rag)
+    user = users.create({'display_name': 'AI4I Missing User'})
+
+    response = root.run(AgentSendRequest(
+        user_id=user['user_id'],
+        session_id='s_ai4i_missing',
+        message='AI4I Type=M, Torque=34Nm일 때 공구 마모 고장 가능성을 예측해줘.',
+    ))
+
+    assert prediction.calls == 0
+    assert rag.calls == 0
+    assert response.prediction_called is False
+    assert response.prediction_skip_reason == 'missing_ai4i_features'
+    assert response.prediction is None
+    assert 'Air temperature' in response.missing_features
+    assert 'Tool wear' in response.missing_features
+    assert response.parsed_ai4i_features == {'Type': 'M', 'Torque': 34.0}
+    assert 'intent_gateway.ai4i_clarification' in response.route
+    assert '고장 확률' not in response.answer
+    assert 'TWF 확률' not in response.answer
+    root.close()
+
+
+def test_ai4i_unclear_temperature_unit_routes_to_clarification(tmp_path):
+    prediction = FakePredictionService()
+    root, users = make_root(tmp_path, prediction_service=prediction)
+    user = users.create({'display_name': 'AI4I Ambiguous Unit User'})
+
+    response = root.run(AgentSendRequest(
+        user_id=user['user_id'],
+        session_id='s_ai4i_ambiguous',
+        message=(
+            'AI4I Type=M, Air temperature=27, Process temperature=36, '
+            'Rotational speed=1480rpm, Torque=34Nm, Tool wear=235min이면 예측해줘.'
+        ),
+    ))
+
+    assert prediction.calls == 0
+    assert response.prediction_called is False
+    assert response.prediction_skip_reason == 'ambiguous_ai4i_features'
+    assert response.prediction is None
+    assert set(response.ambiguous_features) == {'Air temperature', 'Process temperature'}
+    assert 'intent_gateway.ai4i_clarification' in response.route
+    root.close()
+
+
+def test_ai4i_prediction_called_true_only_with_complete_features(tmp_path):
+    prediction = FakePredictionService()
+    root, users = make_root(tmp_path, prediction_service=prediction, llm_service=AnswerLLMService())
+    user = users.create({'display_name': 'AI4I Complete User'})
+
+    response = root.run(AgentSendRequest(
+        user_id=user['user_id'],
+        session_id='s_ai4i_complete',
+        message=(
+            'AI4I 데이터가 Type=M, Air temperature=300.2K, Process temperature=309.0K, '
+            'Rotational speed=1480rpm, Torque=34Nm, Tool wear=235min일 때 공구 마모 고장 가능성을 예측해줘.'
+        ),
+    ))
+
+    assert prediction.calls == 1
+    assert response.prediction_called is True
+    assert response.prediction_skip_reason is None
+    assert response.prediction is not None
+    assert response.parsed_ai4i_features['Tool wear'] == 235
+    root.close()
+
+
 def test_supervisor_keyword_policy_is_hidden_behind_diagnostic_planner():
     planner = DiagnosticPlanner(SupervisorService(NoopLLMService()))
     request = AgentRequest(user_id='u1', session_id='s1', question='정비 전에 안전 절차와 LOTO 확인해야 해?')
     diagnostic = planner.structured_plan(request)
     root_source = inspect.getsource(RootManufacturingGraph._supervisor_planning_node)
+    planning_source = inspect.getsource(planning_nodes.run_diagnostic_planner)
 
     assert diagnostic.requires_safety is True
     assert diagnostic.requires_rag is True
     assert diagnostic.requires_prediction is False
     assert isinstance(diagnostic, DiagnosticPlan)
     assert 'SAFETY_KEYWORDS' not in root_source
-    assert 'diagnostic_planner.plan' in root_source
+    assert 'planning_subagent.invoke' in root_source
+    assert 'diagnostic_planner.plan' in planning_source
 
 
 def test_diagnostic_planner_returns_structured_plan():
@@ -464,10 +686,10 @@ def test_diagnostic_planner_does_not_call_supervisor_private_methods():
     assert '._' + 'layers' not in source
 
 
-def test_diagnostic_fallback_policy_uses_context_resolution_contract():
+def test_deterministic_diagnostic_policy_uses_context_resolution_contract():
     import app.agent.heavy.diagnostic_planner as diagnostic_module
 
-    source = inspect.getsource(diagnostic_module.DiagnosticFallbackPolicy)
+    source = inspect.getsource(diagnostic_module.DeterministicDiagnosticPolicy)
 
     assert 'current' + '_turn' not in source
     assert 'question' + '_kind' not in source
@@ -497,7 +719,6 @@ def test_diagnostic_plan_translator_builds_agent_plan_from_contract():
         requires_prediction=True,
         requires_rag=False,
         requires_safety=False,
-        requires_report=False,
         requires_asset_context=True,
         requires_process_condition=True,
         requires_failure_mode=True,
@@ -517,7 +738,7 @@ def test_diagnostic_plan_translator_builds_agent_plan_from_contract():
 def test_rag_query_planner_does_not_retrieve_directly(tmp_path):
     planner = RagQueryPlanner()
     request = AgentRequest(user_id='u1', session_id='s1', question='스핀들 점검 문서 찾아줘')
-    mfg = ManufacturingAgentGraph(PredictionService(model_path=tmp_path / 'model.joblib'), RagService(), NoopLLMService()).domain_service.build_context(request, None, doc_count=0)
+    mfg = DomainKnowledgeService().build_context(request, None, doc_count=0)
 
     retrieval_request = planner.plan(
         request=request,
@@ -569,18 +790,109 @@ def test_citation_builder_uses_graded_evidence():
     assert citations[0]['reason'] == 'graded_evidence'
 
 
-def test_manufacturing_graph_legacy_wrappers_removed():
-    removed = [
-        '_' + 'make_rag_query',
-        '_' + 'contexts_match_user_terms',
-        '_' + 'collect_action_phrases',
-        '_' + 'safety_guidance',
-        '_' + 'warnings',
-        '_' + 'llm_payload',
-    ]
+def test_heavy_answer_appends_clear_reference_details():
+    request = AgentRequest(user_id='u1', session_id='s1', question='공구 교체 전 안전 절차를 알려줘')
+    context = DomainKnowledgeService().build_context(request, None, doc_count=1)
+    answer = RootManufacturingGraph._append_reference_details(
+        '판정\n점검 후 재개 여부를 판단하세요. [C-C-52-2026]',
+        [{
+            'label': 'C-C-52-2026',
+            'source': 'KOSHA',
+            'title': '공작기계 정비 점검 지침',
+            'doc_id': 'C-C-52-2026',
+            'chunk_id': 'C-C-52-2026_0001',
+            'doc_type': 'maintenance_guidance',
+            'url': 'https://example.test/c-c-52',
+            'score': 0.91,
+        }],
+        context,
+    )
 
-    for method_name in removed:
-        assert not hasattr(ManufacturingAgentGraph, method_name)
+    assert '참조 문서' in answer
+    assert '[C-C-52-2026] 공작기계 정비 점검 지침' in answer
+    assert 'source=KOSHA' in answer
+    assert 'doc_id=C-C-52-2026' in answer
+    assert 'score=0.91' not in answer
+    assert 'URL: https://example.test/c-c-52' not in answer
+    assert '적용 안전 게이트' not in answer
+    assert 'loto_if_physical_maintenance' not in answer
+    assert 'rotating_parts_guard_check' not in answer
+
+
+def test_public_answer_sanitizer_removes_debug_usage_lines():
+    answer = RootManufacturingGraph._sanitize_public_answer(
+        '판정\n문서 근거 기반 안전 점검 보조입니다.\n'
+        'run_id=abc123\n'
+        'model=gpt-5.4\n'
+        'tokens=1200 cost=$0.01 calls=2\n'
+        '반드시 확인할 절차\n방호장치와 비상정지장치를 확인하세요.'
+    )
+
+    lowered = answer.lower()
+    assert 'run_id' not in lowered
+    assert 'gpt-5.4' not in lowered
+    assert 'tokens=' not in lowered
+    assert 'cost=' not in lowered
+    assert 'calls=' not in lowered
+    assert '방호장치와 비상정지장치' in answer
+
+
+def test_agent_send_ignores_generate_report_extra_and_keeps_run_metadata(tmp_path):
+    root, users = make_root(tmp_path)
+    user = users.create({'display_name': 'Report Option Removed User'})
+    request = AgentSendRequest.model_validate({
+        'user_id': user['user_id'],
+        'session_id': 's_report_extra',
+        'message': '토크란?',
+        'generate_report': True,
+    })
+
+    response = root.run(request)
+
+    assert 'generate_report' not in request.model_dump()
+    assert response.run_id
+    assert response.session_id == 's_report_extra'
+    assert response.llm_usage is not None
+    assert response.report is None
+    assert 'run_id' not in response.answer.lower()
+    assert 'tokens' not in response.answer.lower()
+    assert 'cost' not in response.answer.lower()
+    root.close()
+
+
+def test_report_style_request_uses_normal_answer_plan_without_report_node():
+    request = AgentRequest(
+        user_id='u1',
+        session_id='s1',
+        question='드릴기 작업 전 공작물 고정과 방호덮개 확인 항목을 보고서 형식으로 정리해줘.',
+    )
+
+    diagnostic = DiagnosticPlanner(SupervisorService(NoopLLMService())).structured_plan(request)
+    plan = DiagnosticPlanToAgentPlanTranslator().translate(diagnostic)
+
+    assert 'Report Agent' not in plan.required_nodes
+    assert all('Documentation' not in layer.name for layer in plan.layers)
+    assert plan.intent in {'safety_ops', 'knowledge_qa', 'hybrid'}
+
+
+def test_rag_only_safety_preview_is_not_report_request(tmp_path):
+    root, users = make_root(tmp_path)
+    user = users.create({'display_name': 'Safety Report Style User'})
+
+    gateway = root.preview_route(AgentSendRequest(
+        user_id=user['user_id'],
+        session_id='s_safety_report_style',
+        message='드릴기 작업 전에 공작물 고정 상태, 방호덮개, 비상정지장치를 보고서 형식으로 정리해줘.',
+    ))
+
+    assert gateway['selected_path'] == 'supervisor_planning'
+    assert gateway['turn_type'] != 'report_request'
+    assert gateway.get('requires_safety') is True
+    root.close()
+
+
+def test_manufacturing_graph_legacy_module_removed():
+    assert importlib.util.find_spec('app.agent.graph') is None
 
 
 def test_removed_rag_facade_module_is_absent():

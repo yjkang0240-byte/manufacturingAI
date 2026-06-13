@@ -4,7 +4,7 @@ from app.agent.context import AnswerMemory, ContextResolver, RecommendedAction
 from app.services.context_service import ContextService
 from app.services.user_service import UserService
 from app.storage.sqlite_store import SQLiteStore
-from app.schemas import AgentRequest
+from app.schemas.agent import AgentRequest
 
 
 def test_user_crud_and_hard_delete_cascade(tmp_path):

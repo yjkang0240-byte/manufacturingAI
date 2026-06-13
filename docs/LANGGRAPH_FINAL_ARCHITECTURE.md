@@ -6,16 +6,17 @@
 
 ```text
 Raw User Message
-→ Request Context
+→ ContextSubAgent
 → Intent Gateway
-→ Fast Path 또는 Supervisor Planning
+→ Fast Path 또는 PlanningSubAgent
 → 필요한 제조 Subgraph만 조건부 실행
+→ RagEvidenceSubAgent / SafetySubAgent
 → Response / Documentation
-→ Focus Update
+→ MemorySubAgent
 → Audit / Persistence
 ```
 
-현재 구현은 기존 `ManufacturingAgentGraph.run()` 중심 직렬 구조에서 벗어나, `RootManufacturingGraph`가 LangGraph `StateGraph`로 상위 orchestration을 담당하는 형태까지 전환되어 있다. MVP 안정화를 위해 SQLite persistent checkpointer, `user_id:session_id` 기반 thread 격리, process_data 오염 방지, No-LLM Fast Path를 우선 적용했다. RAG 내부의 query planner/retriever/grader/citation builder 분리와 `Send` 기반 병렬 검색은 아직 다음 확장 단계다.
+현재 구현은 `RootManufacturingGraph`가 LangGraph `StateGraph`로 상위 orchestration을 담당한다. 제품 Agent endpoint는 `/agent/send`이며, legacy run endpoint는 제거됐다. Context, Planning, RAG Evidence, Safety, Memory는 각각 별도 LangGraph SubAgent가 담당하고 root graph는 내부 단계를 직접 호출하지 않는다.
 
 ---
 
@@ -26,7 +27,12 @@ Raw User Message
 | Root LangGraph orchestration | `ai_server/app/agent/root_graph.py` |
 | 공유 AgentState | `ai_server/app/agent/state.py` |
 | 표준 trace helper | `ai_server/app/agent/trace.py` |
-| 기존 제조 도메인 service/legacy graph | `ai_server/app/agent/graph.py` |
+| Context SubAgent | `ai_server/app/agent/context_subagent/` |
+| Planning SubAgent | `ai_server/app/agent/planning_subagent/` |
+| RAG Evidence SubAgent | `ai_server/app/agent/rag_evidence/` |
+| Safety SubAgent | `ai_server/app/agent/safety_subagent/` |
+| Memory SubAgent | `ai_server/app/agent/memory_subagent/` |
+| Chroma retriever infrastructure | `ai_server/app/services/chroma_retriever.py` |
 | Intent Gateway | `ai_server/app/services/intent_gateway_service.py` |
 | Follow-up reference resolution | `ai_server/app/services/reference_resolution_service.py` |
 | User-scoped context | `ai_server/app/services/context_service.py` |
@@ -38,23 +44,31 @@ Raw User Message
 
 ## 2. 현재 Root Graph 구조
 
-현재 `RootManufacturingGraph._build_graph()`는 다음 노드들을 등록한다.
+현재 `RootManufacturingGraph._build_graph()`는 top-level routing 노드만 등록한다. SubAgent 내부 node 이름은 root graph가 알지 않는다.
 
 ```python
 graph.add_node('request_context', self._request_context_node)
 graph.add_node('intent_gateway', self._intent_gateway_node)
 graph.add_node('fast_concept_answer', self._fast_concept_answer_node)
-graph.add_node('lightweight_rag_answer', self._lightweight_rag_answer_node)
 graph.add_node('unsupported_or_clarification', self._unsupported_or_clarification_node)
 graph.add_node('supervisor_planning', self._supervisor_planning_node)
 graph.add_node('manufacturing_analysis', self._manufacturing_analysis_node)
 graph.add_node('evidence_retrieval', self._evidence_retrieval_node)
 graph.add_node('safety', self._safety_node)
 graph.add_node('response_synthesis', self._response_synthesis_node)
-graph.add_node('documentation', self._documentation_node)
 graph.add_node('response_packager', self._response_packager_node)
 graph.add_node('focus_updater', self._focus_updater_node)
 graph.add_node('audit_persistence', self._audit_persistence_node)
+```
+
+SubAgent 호출 boundary:
+
+```text
+request_context -> ContextSubAgent.invoke(ContextInput)
+supervisor_planning -> PlanningSubAgent.invoke(PlanningInput)
+evidence_retrieval -> RagEvidenceSubAgent.invoke(RagEvidenceInput)
+safety -> SafetySubAgent.invoke(SafetyInput)
+focus_updater -> MemorySubAgent.invoke(MemoryInput)
 ```
 
 그래프 흐름은 아래와 같다.
@@ -66,7 +80,6 @@ request_context
   ↓
 intent_gateway
   ├─ fast_concept_answer
-  ├─ lightweight_rag_answer
   ├─ unsupported_or_clarification
   └─ supervisor_planning
         ↓
@@ -77,8 +90,6 @@ intent_gateway
       safety?
         ↓
       response_synthesis
-        ↓
-      documentation?
         ↓
       response_packager
   ↓
@@ -119,9 +130,9 @@ final_state = self.graph.invoke(state, config=config)
 
 - `run_id`는 매 실행마다 새로 생성된다.
 - `user_id:session_id`는 LangGraph `thread_id`로 사용된다.
-- 같은 `user_id + session_id` 조합이면 `messages`, `last_focus`, `recent_entities`가 이어진다.
+- 같은 `user_id + session_id` 조합이면 `recent_turns`, `rolling_summary`, `last_answer_memory`, `session_last_process_data`가 이어진다.
 - 다른 사용자가 같은 `session_id`를 써도 thread가 분리된다.
-- 후속 질문의 “이것/그것/지난번” 해석은 history DB보다 먼저 `last_focus`를 본다.
+- 후속 질문의 “이것/그것/지난번” 해석은 history DB보다 먼저 `last_answer_memory`를 본다.
 - 서버 재시작 후에도 SQLite checkpoint DB가 남아 있으면 같은 user/session의 short-term state를 복원할 수 있다.
 
 ---
@@ -135,17 +146,16 @@ class AgentState(TypedDict):
     run_id: str
     user_id: str
     session_id: str
-    messages: Annotated[list[BaseMessage], add_messages]
-    current_question: str
-    original_question: str
+    current_user_message: str
     send_request: AgentSendRequest
 
     request: NotRequired[AgentRequest]
     user_context: NotRequired[dict[str, Any]]
-    resolved_reference: NotRequired[dict[str, Any]]
-    last_focus: NotRequired[dict[str, Any] | None]
-    recent_entities: NotRequired[list[dict[str, Any]]]
-    current_turn_process_data: NotRequired[dict[str, Any] | None]
+    context_resolution: NotRequired[dict[str, Any]]
+    context_packs: NotRequired[dict[str, Any]]
+    compressed_context: NotRequired[dict[str, Any]]
+    last_answer_memory: NotRequired[dict[str, Any]]
+    turn_process_data: NotRequired[dict[str, Any] | None]
     previous_turn_process_data: NotRequired[dict[str, Any] | None]
     session_last_process_data: NotRequired[dict[str, Any] | None]
     process_data_reference_policy: NotRequired[dict[str, Any]]
@@ -158,7 +168,7 @@ class AgentState(TypedDict):
     prediction: NotRequired[PredictionResponse | None]
     manufacturing_context: NotRequired[ManufacturingContext]
     retrieved_documents: NotRequired[list[RagChunk]]
-    recommended_actions: NotRequired[list[str]]
+    structured_answer_payload: NotRequired[dict[str, Any]]
     safety_guidance: NotRequired[str | None]
     answer: NotRequired[str]
     report: NotRequired[str | None]
@@ -174,51 +184,35 @@ class AgentState(TypedDict):
 설계 원칙:
 
 - 노드는 전체 state를 새로 만들지 않고 필요한 key만 갱신한다.
-- `messages`는 `add_messages` reducer로 누적된다.
-- `last_focus`는 follow-up 질문 해석의 1순위 신호다.
+- SubAgent 내부 state는 root `AgentState`와 분리한다.
+- `last_answer_memory`는 follow-up 질문 해석의 1순위 신호다.
 - `user_context`는 supporting evidence이며 현재 입력, 현재 RAG, 현재 safety gate보다 우선하지 않는다.
 - 이전 턴의 `process_data`는 session state에 저장하되, 단순 개념 질문에는 자동 주입하지 않는다.
 
 ---
 
-## 5. Request Context Node
+## 5. ContextSubAgent
 
-`request_context` 노드는 다음을 처리한다.
+`request_context` root node는 `ContextInput`을 만들고 `ContextSubAgent.invoke(...)`만 호출한다.
 
 ```text
 User validation
 → session upsert
 → user_context build
-→ reference resolution
+→ conversation context resolution
+→ context pack build
+→ context validation
 → AgentRequest 생성
 ```
 
-핵심 동작:
+SubAgent 내부 node:
 
-```python
-user_context = self.context_service.build(
-    user_id=req.user_id,
-    session_id=session_id,
-    request=base,
-)
-
-resolution = self.reference_resolution_service.resolve(
-    user_id=req.user_id,
-    session_id=session_id,
-    question=req.message,
-    context=user_context,
-    last_focus=state.get('last_focus'),
-    recent_entities=state.get('recent_entities') or [],
-    messages=state.get('messages') or [],
-)
-
-user_context['current_turn'] = resolution.model_dump()
-request = self._to_agent_request(
-    req,
-    session_id=session_id,
-    user_context=user_context,
-    question=resolution.resolved_question,
-)
+```text
+load_request_context
+→ resolve_conversation_context
+→ build_context_pack
+→ validate_context
+→ emit_context_output
 ```
 
 여기서 중요한 점은 원문 질문과 해석 결과가 분리된다는 것이다.
@@ -226,14 +220,10 @@ request = self._to_agent_request(
 ```json
 {
   "original_question": "그렇다면 이것의 단점은?",
-  "resolved_question": "토크의 단점은?",
-  "resolved": true,
-  "resolved_target": {
-    "label": "토크",
-    "type": "concept",
-    "source": "last_focus",
-    "confidence": 0.95
-  }
+  "standalone_query": "토크의 단점은?",
+  "is_followup": true,
+  "followup_target": "토크",
+  "followup_type": "previous_concept"
 }
 ```
 
@@ -249,7 +239,7 @@ request = self._to_agent_request(
 |---|---|---:|---:|---:|
 | `토크가 뭐야?` | `fast_concept_answer` | false | false | false |
 | `이것의 단점은?` after `토크가 뭐야?` | `fast_concept_answer` | false | false | false |
-| `LOTO 기준 문서로 알려줘` | `lightweight_rag_answer` | false | true | optional |
+| `LOTO 기준 문서로 알려줘` | `supervisor_planning` | false | true | optional |
 | `이 토크 값 위험해?` + process_data | `supervisor_planning` | true | optional | possible |
 | `설비 멈춰줘` | `unsupported_or_clarification` | false | false | false |
 
@@ -257,7 +247,7 @@ request = self._to_agent_request(
 
 - `process_data`가 있어도 `토크가 뭐야?`는 prediction을 실행하지 않는다.
 - `이 토크 값 위험해?`는 prediction path로 간다.
-- `토크가 뭐야? → 이것의 단점은?`은 `last_focus=토크`로 해석한다.
+- `토크가 뭐야? → 이것의 단점은?`은 `last_answer_memory.focus=토크`로 해석한다.
 - `토크와 공구 마모의 차이는? → 이것의 단점은?`은 clarification으로 보낸다.
 
 ---
@@ -276,8 +266,8 @@ request_context
 
 사용하는 것:
 
-- `resolved_question`
-- `resolved_target`
+- `standalone_query`
+- `context_resolution`
 - 일반 제조/기계 지식
 - 최소 LLM payload
 
@@ -307,18 +297,18 @@ supervisor_planning
 → evidence_retrieval
 → safety
 → response_synthesis
-→ documentation
 → response_packager
 ```
 
-### 8.1 Supervisor Planning
+### 8.1 PlanningSubAgent
 
-`supervisor_planning`은 `SupervisorService.plan()`을 호출해서 `AgentPlan`을 만든다.
+`supervisor_planning` root node는 `PlanningInput`을 만들고 `PlanningSubAgent.invoke(...)`만 호출한다.
 
-```python
-plan = self.heavy_graph.supervisor.plan(request, usage_callback=collect_usage)
-state['plan'] = plan
-state['route'] = list(plan.required_nodes)
+```text
+build_planning_context
+→ run_diagnostic_planner
+→ validate_plan
+→ emit_planning_output
 ```
 
 `AgentPlan`의 주요 필드:
@@ -327,7 +317,6 @@ state['route'] = list(plan.required_nodes)
 prediction_required: bool
 rag_required: bool
 safety_required: bool
-report_required: bool
 asset_context_required: bool
 process_condition_required: bool
 failure_mode_required: bool
@@ -370,43 +359,37 @@ state['manufacturing_context'] = manufacturing_context
 
 ### 8.3 Evidence Retrieval
 
-`evidence_retrieval`은 현재 RAG 검색과 evidence grading을 한 노드 안에서 처리한다.
+`evidence_retrieval`은 RAG 내부 단계를 직접 실행하지 않는다. Root graph는
+`RagEvidenceInput`을 만들고 LangGraph 기반 `RagEvidenceSubAgent`를 invoke한
+뒤, 결과를 canonical state fields에 복사한다.
 
-```python
-retrieval_request = self.rag_query_planner.plan(
-    request=request,
-    planned_query=plan.rag_query,
-    prediction=prediction,
-    manufacturing_context=manufacturing_context,
-    top_k=top_k,
-    filters=plan.rag_filters,
-)
-contexts = self.retriever.retrieve(retrieval_request)
-```
-
-근거가 없거나 약하면 local replan을 수행한다.
-
-```python
-while plan.rag_required and (not contexts or weak_contexts) and replan_attempt < AGENT_MAX_REPLAN_ATTEMPTS:
-    plan = self.heavy_graph.supervisor.replan(...)
-    contexts = self.rag_service.search(...)
+```text
+RagEvidenceSubAgent
+  -> plan_queries
+  -> retrieve
+  -> filter
+  -> grade
+  -> cite
+  -> build_payload
+  -> trace
 ```
 
 현재 trace node:
 
 ```text
-retrieval.document_retriever
-retrieval.local_replan
+retrieval.rag_evidence_subagent
 retrieval.evidence_grader
 ```
 
 ### 8.4 Safety
 
-`safety`는 제조 context의 safety gates를 바탕으로 action과 safety guidance를 만든다.
+`safety` root node는 `SafetyInput`을 만들고 `SafetySubAgent.invoke(...)`만 호출한다.
 
-```python
-actions = self.recommendation_builder.collect_action_phrases(prediction, manufacturing_context)
-safety_guidance = self.safety_gate_builder.safety_guidance(manufacturing_context)
+```text
+build_safety_context
+→ apply_safety_policy
+→ validate_safety_output
+→ emit_safety_output
 ```
 
 현재 trace node:
@@ -415,15 +398,7 @@ safety_guidance = self.safety_gate_builder.safety_guidance(manufacturing_context
 safety.safety_subgraph
 ```
 
-다음 확장에서는 이 노드를 아래처럼 더 쪼개는 것이 적합하다.
-
-```text
-safety.gate_builder
-safety.constraint_injector
-safety.action_validator
-safety.answer_validator
-safety.report_validator
-```
+SafetySubAgent는 최종 답변 문장을 렌더링하지 않고 safety payload만 만든다.
 
 ### 8.5 Response Synthesis
 
@@ -433,7 +408,7 @@ safety.report_validator
 llm_result = self.llm_service.generate_json(
     schema_name='manufacturing_domain_agent_response',
     schema=ANSWER_SCHEMA,
-    system_prompt=self.heavy_graph._answer_system_prompt(plan.report_required),
+    system_prompt=self.heavy_graph._answer_system_prompt(),
     payload=self.structured_payload_builder.build(...),
     operation='answer_generation',
 )
@@ -468,18 +443,9 @@ supervisor.parent_replan
 
 ### 8.6 Documentation
 
-`documentation`은 보고서가 필요할 때만 실행된다.
-
-```python
-if not state.get('report'):
-    state['report'] = self.heavy_graph.report_service.make_report(...)
-```
-
-현재 trace node:
-
-```text
-documentation.report_composer
-```
+별도 documentation/report node는 현재 runtime에서 사용하지 않는다. 사용자가
+보고서 형식을 요청하면 `answer` 본문을 Markdown 스타일로 구성하며, 내부
+run metadata와 trace는 history/debug payload에만 남긴다.
 
 ### 8.7 Response Packager
 
@@ -502,32 +468,22 @@ documentation.report_composer
 
 ---
 
-## 9. Focus Updater
+## 9. MemorySubAgent
 
-`focus_updater`는 다음 턴의 follow-up 처리를 위해 대화 초점을 저장한다.
+`focus_updater` root node는 `MemoryInput`을 만들고 `MemorySubAgent.invoke(...)`만 호출한다. MemorySubAgent는 다음 턴의 follow-up 처리를 위해 `AnswerMemory`와 최근 turn state를 저장한다.
 
-예:
-
-```json
-{
-  "last_focus": {
-    "label": "토크",
-    "type": "concept",
-    "confidence": 0.95,
-    "source": "current_turn",
-    "session_id": "session_demo",
-    "source_run_id": "..."
-  }
-}
+```text
+extract_memory_candidates
+→ update_focus
+→ write_answer_memory
+→ emit_memory_output
 ```
 
 정책:
 
-- resolved target이 있으면 그것을 focus로 둔다.
-- 일반 개념 질문에서 단일 entity가 있으면 그 entity를 focus로 둔다.
-- 고장모드 분석 응답이면 주요 failure mode를 focus 후보로 둔다.
-- 보고서 생성 응답이면 `직전 점검 보고서`를 focus로 둘 수 있다.
-- 비교 질문처럼 entity가 여러 개면 단일 focus를 강제로 만들지 않는다.
+- answer memory extraction과 audit persistence를 섞지 않는다.
+- MemoryService write 실패는 response 생성을 막지 않고 warning/diagnostic으로 남긴다.
+- RootGraph는 memory 내부 extraction 규칙을 알지 않는다.
 
 이 구조 덕분에 아래 대화가 동작한다.
 
@@ -548,7 +504,6 @@ Agent: 여기서 "이것"은 직전 질문의 "토크"를 의미한다고 보고
 trace 정규화
 usage summary 보정
 history 저장
-memory update
 context metadata 보정
 ```
 
@@ -561,7 +516,7 @@ context metadata 보정
 주의:
 
 - Fast Path 응답도 history에 저장된다.
-- Memory update는 raw private data를 그대로 저장하지 않고 rule-based summary 중심으로 저장한다.
+- Memory update는 `MemorySubAgent`에서 처리되고 audit persistence는 history 저장만 맡는다.
 - trace에는 raw user_id 대신 hash를 쓰는 방향이 운영 기준이다. 현재 observability 확장 시 이 정책을 유지해야 한다.
 
 ---
@@ -606,7 +561,7 @@ def send_agent(req: AgentSendRequest):
 2. 설비 제어 요청은 gateway에서 차단
 3. process_data가 있어도 일반 개념 질문은 prediction 실행 안 함
 4. 현재 값 위험도 질문은 prediction 필요
-5. 같은 session의 last_focus로 "이것" 해석
+5. 같은 session의 last_answer_memory로 "이것" 해석
 6. 비교 질문 뒤의 "이것"은 ambiguous 처리
 7. heavy path가 Subgraph trace node를 생성
 ```
@@ -620,40 +575,17 @@ assert 'manufacturing.analysis_subgraph' in trace_steps
 assert 'retrieval.evidence_grader' in trace_steps
 assert 'safety.safety_subgraph' in trace_steps
 assert 'response.answer_composer' in trace_steps
-assert 'documentation.report_composer' in trace_steps
 ```
 
 ---
 
 ## 13. 현재 구현의 한계
 
-현재 구조는 “Root Graph 계층화”까지 들어간 상태다. 하지만 완전한 최종형까지는 아래가 남아 있다.
+현재 구조는 RootGraph를 top-level orchestrator로 두고 Context, Planning, RAG Evidence, Safety, Memory를 실제 LangGraph SubAgent로 분리한 상태다. 남은 한계는 아래 정도다.
 
-### 13.1 RAG 내부가 아직 완전 분리되지 않음
+### 13.1 LangGraph Send 기반 병렬 검색 미구현
 
-현재:
-
-```text
-evidence_retrieval_node 안에서
-query 생성, retrieve, weak evidence 판단, local replan 수행
-```
-
-목표:
-
-```text
-Evidence Retrieval Subgraph
- ├─ rag_query_planner
- ├─ dynamic_retrieval_dispatcher
- ├─ document_retriever
- ├─ evidence_filter
- ├─ evidence_grader
- ├─ citation_builder
- └─ retrieval_replan
-```
-
-### 13.2 LangGraph Send 기반 병렬 검색 미구현
-
-현재 RAG query는 단일 query 중심이다.
+현재 RAG Evidence SubAgent는 bounded fan-out query를 순차 실행한다.
 
 목표:
 
@@ -674,12 +606,12 @@ def dispatch_retrieval(state: AgentState):
 - 설비 매뉴얼 query
 - 보고서 템플릿 query
 
-### 13.3 Safety validator가 아직 하나로 묶여 있음
+### 13.2 Safety answer validation은 response_synthesis에 남아 있음
 
 현재:
 
 ```text
-safety_subgraph에서 safety guidance 생성
+SafetySubAgent에서 safety payload 생성
 response_synthesis에서 validate_answer 실행
 ```
 
@@ -695,22 +627,13 @@ Safety Subgraph
  └─ escalation_decision
 ```
 
-### 13.4 Documentation validation 미분리
+### 13.3 Report-style output
 
-현재 보고서 생성은 있지만 completeness checker가 별도 노드가 아니다.
+별도 documentation/report node는 현재 runtime에서 사용하지 않는다. 사용자가
+보고서 형식을 요청하면 `answer` 본문을 간결한 Markdown 스타일로 구성한다.
+내부 run metadata, trace, citations, usage는 history/debug payload에만 남긴다.
 
-목표:
-
-```text
-Documentation Subgraph
- ├─ report_planner
- ├─ report_evidence_binder
- ├─ report_composer
- ├─ report_safety_validator
- └─ report_completeness_checker
-```
-
-### 13.5 Checkpointer는 MVP용 SQLite
+### 13.4 Checkpointer는 MVP용 SQLite
 
 현재:
 
@@ -817,7 +740,7 @@ PDF 업로드
 
 완료 기준:
 
-- 같은 `user_id + session_id`로 재접속해도 `last_focus`가 유지된다.
+- 같은 `user_id + session_id`로 재접속해도 `last_answer_memory`가 유지된다.
 - user hard delete 시 checkpoint도 함께 삭제된다.
 
 ### Phase E. Async Job / Event Stream
@@ -837,7 +760,6 @@ POST /agent/jobs/{job_id}/cancel
 
 사용처:
 
-- 긴 보고서 생성
 - 다중 문서 RAG 검색
 - PDF ingestion
 - multi-step evaluation
@@ -846,10 +768,10 @@ POST /agent/jobs/{job_id}/cancel
 
 ## 15. 다른 AI에게 전달할 핵심 요약
 
-현재 제조 AI Agent는 `RootManufacturingGraph`를 중심으로 LangGraph `StateGraph`를 사용한다. `user_id:session_id`를 `thread_id`로 사용하고 SQLite persistent checkpointer를 붙여 같은 user/session의 `messages`, `last_focus`, `recent_entities`, `session_last_process_data`를 이어간다. `request_context`에서 user-scoped context와 follow-up reference resolution을 수행하고, `intent_gateway`에서 단순 개념 질문은 Fast Path로 보내며, 현재 공정 판단/점검/보고서 요청만 heavy path로 보낸다.
+현재 제조 AI Agent는 `RootManufacturingGraph`를 중심으로 LangGraph `StateGraph`를 사용한다. `user_id:session_id`를 `thread_id`로 사용하고 SQLite persistent checkpointer를 붙여 같은 user/session의 `recent_turns`, `rolling_summary`, `last_answer_memory`, `session_last_process_data`를 이어간다. `ContextSubAgent`에서 user-scoped context와 follow-up resolution을 수행하고, `intent_gateway`에서 단순 개념 질문은 Fast Path로 보내며, 현재 공정 판단/점검/문서 근거 요청만 heavy path로 보낸다.
 
-Fast Path는 토크/공구 마모/스핀들/회전수 같은 MVP 핵심 용어에 대해 glossary/template 기반 No-LLM 응답을 우선 사용한다. 따라서 단순 개념 질문은 Prediction/RAG/Safety/Report/LLM을 호출하지 않는다. 이전 턴의 `process_data`는 “방금 데이터”, “이 토크 값”, “그 조건”처럼 명시 참조가 있을 때만 prediction에 사용된다.
+Fast Path는 토크/공구 마모/스핀들/회전수 같은 MVP 핵심 용어에 대해 glossary/template 기반 No-LLM 응답을 우선 사용한다. 따라서 단순 개념 질문은 Prediction/RAG/Safety/LLM을 호출하지 않는다. 이전 턴의 `process_data`는 “방금 데이터”, “이 토크 값”, “그 조건”처럼 명시 참조가 있을 때만 prediction에 사용된다.
 
-Heavy path는 현재 `supervisor_planning → manufacturing_analysis → evidence_retrieval → safety → response_synthesis → documentation → response_packager`로 분리되어 trace에 Subgraph 단위로 표시된다. Prediction, domain context, RAG 검색, safety guidance, LLM answer generation, report generation은 state에 중간 산출물로 저장된다.
+Heavy path는 현재 `PlanningSubAgent → manufacturing_analysis → RagEvidenceSubAgent → SafetySubAgent → response_synthesis → response_packager`로 분리되어 trace에 Subgraph 단위로 표시된다. Prediction, domain context, RAG 검색, safety guidance, LLM answer generation은 state에 중간 산출물로 저장된다.
 
-다음 확장의 핵심은 `evidence_retrieval_node`와 `safety_node`를 더 작은 LangGraph node/subgraph로 분해하고, Chroma 기반 문서 검색과 LangGraph `Send` 기반 병렬 retrieval을 붙이는 것이다. 운영 품질을 위해서는 SQLite checkpointer를 Postgres/Redis checkpointer로 전환하고, user hard delete 시 checkpoint/history/memory/vector namespace를 함께 삭제하는 정책이 필요하다.
+다음 확장의 핵심은 response synthesis까지 SubAgent boundary를 적용할지 결정하고, RAG fan-out을 LangGraph `Send` 기반 병렬 retrieval로 바꿀 필요가 있는지 검토하는 것이다. 운영 품질을 위해서는 SQLite checkpointer를 Postgres/Redis checkpointer로 전환하고, user hard delete 시 checkpoint/history/memory/vector namespace를 함께 삭제하는 정책이 필요하다.

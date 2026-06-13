@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agent.formatters.fallback_formatter import FallbackFormatter
+from app.agent.formatters.clarification_formatter import ClarificationFormatter
 from app.agent.formatters.fast_concept_formatter import FastConceptFormatter
 from app.agent.formatters.general_lightweight_formatter import GeneralLightweightFormatter
 from app.agent.formatters.recommended_action_formatter import RecommendedActionFormatter, RecommendedActionItemFormatter
@@ -16,8 +16,7 @@ class FormatterRegistry:
             'general_lightweight_answer': GeneralLightweightFormatter(),
             'recommended_action_recap': RecommendedActionFormatter(),
             'recommended_action_item_explanation': RecommendedActionItemFormatter(),
-            'clarification': FallbackFormatter(),
-            'fallback': FallbackFormatter(),
+            'clarification': ClarificationFormatter(),
         }
         self._safety_formatter = SafetyFormatter()
 
@@ -27,5 +26,7 @@ class FormatterRegistry:
             if isinstance(safety_context, SafetyContext):
                 return self._safety_formatter.format(safety_context)
             return self._safety_formatter.format(SafetyContext.model_validate(safety_context or {}))
-        formatter = self._formatters.get(key) or self._formatters['fallback']
+        formatter = self._formatters.get(key)
+        if formatter is None:
+            raise KeyError(f'unknown formatter: {key}')
         return formatter.format(context)

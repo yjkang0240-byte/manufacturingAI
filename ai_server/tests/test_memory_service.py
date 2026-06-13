@@ -1,15 +1,7 @@
 from __future__ import annotations
 
-from app.schemas import (
-    ActionStep,
-    AgentResponse,
-    AssetContext,
-    ManufacturingContext,
-    RiskAssessment,
-    RiskAxis,
-    SafetyGateResult,
-    AgentRequest,
-)
+from app.schemas.agent import AgentRequest, AgentResponse
+from app.schemas.domain import ActionStep, AssetContext, ManufacturingContext, RiskAssessment, RiskAxis, SafetyGateResult
 from app.services.memory_service import MemoryService
 from app.services.user_service import UserService
 from app.storage.sqlite_store import SQLiteStore
@@ -40,10 +32,9 @@ def test_memory_extraction_from_run(tmp_path):
             )
         ],
     )
-    response = AgentResponse(run_id='r1', user_id=user['user_id'], route=[], answer='ok', manufacturing_context=mfg, report='report')
-    result = MemoryService(store).update_from_run(user_id=user['user_id'], request=AgentRequest(user_id=user['user_id'], question='q', session_id='s1', generate_report=True), response=response)
+    response = AgentResponse(run_id='r1', user_id=user['user_id'], route=[], answer='ok', manufacturing_context=mfg)
+    result = MemoryService(store).update_from_run(user_id=user['user_id'], request=AgentRequest(user_id=user['user_id'], question='q', session_id='s1'), response=response)
     memories = store.list_memories(user['user_id'])
 
     assert result['updated_count'] >= 3
-    assert {memory['memory_type'] for memory in memories} >= {'equipment_preference', 'safety_note', 'report_preference', 'recent_summary'}
-
+    assert {memory['memory_type'] for memory in memories} >= {'equipment_preference', 'safety_note', 'recent_summary'}

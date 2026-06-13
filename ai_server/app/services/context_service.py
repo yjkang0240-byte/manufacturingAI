@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from app.config import MAX_CONTEXT_TOKENS, MAX_LONG_TERM_MEMORIES, MAX_RECENT_RUNS, MAX_SIMILAR_RUNS
-from app.schemas import AgentRequest
+from app.schemas.agent import AgentRequest
 from app.storage.sqlite_store import SQLiteStore
 
 

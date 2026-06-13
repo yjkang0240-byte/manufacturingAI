@@ -1,3 +1,9 @@
+# Historical Record
+
+This document records intermediate RAG/vector work. It is not the current
+runtime contract. Current runtime uses `RagEvidenceSubAgent` and
+`app.services.chroma_retriever.ChromaRetriever`.
+
 # RAG Vector DB and Manufacturing Sub-Agent Architecture Record
 
 이 문서는 제조 AI Agent 프로젝트에서 **외부 RAG 데이터 수집 및 Chroma Vector DB 구축**과 **제조 Sub-Agent 구조 분리**에 집중해 정리한 상세 기록이다.
@@ -714,7 +720,7 @@ prediction/RAG/safety/report 필요 여부 결정
 
 ```text
 RagQueryPlanner
-Retriever
+RagEvidenceSubAgent
 EvidenceFilter
 EvidenceGrader
 CitationBuilder
@@ -904,20 +910,20 @@ diagnostic_plan.rag_reason
 query string 또는 query plan
 ```
 
-### 14.2 Retriever
+### 14.2 RagEvidenceSubAgent Retrieval Node
 
 역할:
 
 ```text
-검색 backend 호출만 담당
+RagService / ChromaRetriever 호출과 retrieval trace 수집
 ```
 
-현재 다음 단계에서 해야 할 핵심 작업은 이 Retriever를 Chroma DB에 연결하는 것이다.
+현재 Agent RAG path는 RagEvidenceSubAgent 내부 retrieval node에서 Chroma DB를 검색한다.
 
 예상 흐름:
 
 ```text
-Retriever.retrieve(query, filters)
+RagEvidenceSubAgent.retrieve
   -> Chroma collection query
   -> top_k chunks 반환
 ```
@@ -992,7 +998,7 @@ vectors: 727
 
 ```text
 RagQueryPlanner
-  -> Chroma Retriever
+  -> ChromaRetriever
   -> EvidenceFilter
   -> EvidenceGrader
   -> CitationBuilder
@@ -1088,7 +1094,7 @@ Chroma PersistentClient 연결
 collection=manufacturing_rag 검색
 query embedding 생성
 metadata filter 적용
-Retriever 인터페이스에 연결
+RagService / ChromaRetriever에 연결
 ```
 
 ### 17.2 Metadata filter 정책

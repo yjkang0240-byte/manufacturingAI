@@ -1,12 +1,14 @@
 # API 예시
 
-## Agent Run
+## Agent Send
 
 ```bash
-curl -X POST http://localhost:8000/agent/run \
+curl -X POST http://localhost:8000/agent/send \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "토크가 높고 공구 마모가 큰데 어떤 점검과 안전 절차를 확인해야 해?",
+    "user_id": "demo-user",
+    "message": "토크가 높고 공구 마모가 큰데 어떤 점검과 안전 절차를 확인해야 해?",
+    "session_id": "demo-session",
     "process_data": {
       "type": "L",
       "air_temperature_k": 302.1,
@@ -14,8 +16,7 @@ curl -X POST http://localhost:8000/agent/run \
       "rotational_speed_rpm": 1380,
       "torque_nm": 58.2,
       "tool_wear_min": 210
-    },
-    "generate_report": true
+    }
   }'
 ```
 

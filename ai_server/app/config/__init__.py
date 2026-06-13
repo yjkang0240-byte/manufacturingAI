@@ -22,7 +22,6 @@ AI4I_CSV = DATA_DIR / 'ai4i' / 'ai4i2020.csv'
 MODEL_BUNDLE = MODEL_DIR / 'ai4i_model_bundle.joblib'
 MODEL_METRICS = MODEL_DIR / 'ai4i_metrics.json'
 CHUNKS_PATH = VECTOR_DIR / 'chunks.jsonl'
-INDEX_PATH = VECTOR_DIR / 'tfidf_index.joblib'
 HISTORY_DB_PATH = Path(os.getenv('HISTORY_DB_PATH', HISTORY_DIR / 'agent_runs.sqlite3'))
 LANGGRAPH_CHECKPOINT_DB = Path(os.getenv('LANGGRAPH_CHECKPOINT_DB', STORAGE_DIR / 'checkpoints' / 'langgraph_checkpoints.sqlite3'))
 
@@ -33,10 +32,10 @@ APP_ENV = os.getenv('APP_ENV', 'local').strip().lower()
 # LLM configuration. This app is LLM-first: local/template execution is not a
 # supported runtime mode.
 LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'openai').strip().lower()
-LLM_MODEL = os.getenv('LLM_MODEL', 'gpt-5.4-mini').strip()
+LLM_MODEL = os.getenv('LLM_MODEL', 'gpt-5.4').strip()
 LLM_TEMPERATURE = float(os.getenv('LLM_TEMPERATURE', '0.2'))
 LLM_TIMEOUT_SECONDS = float(os.getenv('LLM_TIMEOUT_SECONDS', '60'))
-LLM_MAX_OUTPUT_TOKENS = int(os.getenv('LLM_MAX_OUTPUT_TOKENS', '1800'))
+LLM_MAX_OUTPUT_TOKENS = int(os.getenv('LLM_MAX_OUTPUT_TOKENS', '4000'))
 LLM_ENABLE_STRUCTURED_OUTPUT = os.getenv('LLM_ENABLE_STRUCTURED_OUTPUT', 'true').strip().lower() in {'1','true','yes','y'}
 LLM_ALLOW_EXPENSIVE_MODELS = os.getenv('LLM_ALLOW_EXPENSIVE_MODELS', 'false').strip().lower() in {'1','true','yes','y'}
 USD_KRW_EXCHANGE_RATE = float(os.getenv('USD_KRW_EXCHANGE_RATE', '1400'))
@@ -54,6 +53,12 @@ AGENT_SUPERVISOR_LLM_REFINEMENT = os.getenv('AGENT_SUPERVISOR_LLM_REFINEMENT', '
 AGENT_MAX_RAG_TOP_K = int(os.getenv('AGENT_MAX_RAG_TOP_K', '8'))
 AGENT_MAX_REPLAN_ATTEMPTS = int(os.getenv('AGENT_MAX_REPLAN_ATTEMPTS', '2'))
 RAG_MIN_NORMALIZED_SCORE = float(os.getenv('RAG_MIN_NORMALIZED_SCORE', '0.05'))
+RAG_EMBEDDING_PROVIDER = os.getenv('RAG_EMBEDDING_PROVIDER', 'openai').strip().lower()
+RAG_EMBEDDING_MODEL = os.getenv('RAG_EMBEDDING_MODEL', 'text-embedding-3-small').strip()
+CHROMA_COLLECTION = os.getenv('CHROMA_COLLECTION', 'manufacturing_rag').strip() or 'manufacturing_rag'
+_chroma_persist_raw = Path(os.getenv('CHROMA_PERSIST_DIR', AI_SERVER_DIR / 'data' / 'vector_db' / 'chroma'))
+CHROMA_PERSIST_DIR = _chroma_persist_raw if _chroma_persist_raw.is_absolute() else PROJECT_ROOT / _chroma_persist_raw
+RAG_CORPUS_EXPECTED_COUNT = int(os.getenv('RAG_CORPUS_EXPECTED_COUNT', '727'))
 MAX_CONTEXT_TOKENS = int(os.getenv('MAX_CONTEXT_TOKENS', '2000'))
 MAX_RECENT_RUNS = int(os.getenv('MAX_RECENT_RUNS', '3'))
 MAX_SIMILAR_RUNS = int(os.getenv('MAX_SIMILAR_RUNS', '3'))
@@ -89,7 +94,7 @@ LLM_MODEL_CATALOG = {
         'cached_input_per_1m': 0.075,
         'output_per_1m': 4.50,
         'selectable': True,
-        'recommended': True,
+        'recommended': False,
     },
     'gpt-5.4': {
         'label': 'GPT-5.4',
@@ -98,7 +103,7 @@ LLM_MODEL_CATALOG = {
         'cached_input_per_1m': 0.25,
         'output_per_1m': 15.00,
         'selectable': True,
-        'recommended': False,
+        'recommended': True,
     },
     'gpt-5.5': {
         'label': 'GPT-5.5',

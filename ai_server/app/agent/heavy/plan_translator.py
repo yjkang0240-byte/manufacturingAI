@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas import AgentLayer, AgentPlan
+from app.schemas.agent import AgentLayer, AgentPlan
 
 from app.agent.heavy.diagnostic_planner import DiagnosticPlan
 
@@ -18,7 +18,6 @@ class DiagnosticPlanToAgentPlanTranslator:
             prediction_required=diagnostic.requires_prediction,
             rag_required=diagnostic.requires_rag,
             safety_required=diagnostic.requires_safety,
-            report_required=diagnostic.requires_report,
             domain_context_required=True,
             asset_context_required=diagnostic.requires_asset_context,
             process_condition_required=diagnostic.requires_process_condition,
@@ -40,7 +39,6 @@ class DiagnosticPlanToAgentPlanTranslator:
         active = [
             diagnostic.requires_prediction,
             diagnostic.requires_safety,
-            diagnostic.requires_report,
             diagnostic.requires_knowledge,
         ]
         if sum(bool(item) for item in active) >= 2:
@@ -49,8 +47,6 @@ class DiagnosticPlanToAgentPlanTranslator:
             return 'prediction'
         if diagnostic.requires_safety:
             return 'safety_ops'
-        if diagnostic.requires_report:
-            return 'documentation'
         if diagnostic.requires_knowledge or diagnostic.requires_rag:
             return 'knowledge_qa'
         return 'general'
@@ -69,13 +65,11 @@ class DiagnosticPlanToAgentPlanTranslator:
             layers.append(AgentLayer(name='4. Failure Mode Layer', nodes=['Failure Mode Agent'], purpose='AI4I 고장모드와 도메인 카탈로그를 연결'))
         layers.append(AgentLayer(name='5. Risk & Priority Layer', nodes=['Risk & Priority Agent'], purpose='품질/설비/안전/생산 위험도를 분리 산정'))
         if diagnostic.requires_rag:
-            layers.append(AgentLayer(name='6. Evidence Retrieval Layer', nodes=['RAG Query Planner', 'Retriever', 'Evidence Filter', 'Evidence Grader', 'Citation Builder'], purpose='문서 근거 검색, 필터링, 평가, citation 생성'))
+            layers.append(AgentLayer(name='6. Evidence Retrieval Layer', nodes=['RAG Evidence SubAgent'], purpose='문서 근거 검색, 필터링, 평가, citation 생성'))
         if diagnostic.requires_safety_gate:
             layers.append(AgentLayer(name='7. Safety Gate Layer', nodes=['Safety Gate Agent'], purpose='LOTO, 방호장치, 비상정지, 전기/고온 위험 확인'))
         if diagnostic.requires_action_plan:
             layers.append(AgentLayer(name='8. Action Planning Layer', nodes=['Action Planner Agent'], purpose='실행 가능한 점검 순서와 승인 필요 여부 구조화'))
         layers.append(AgentLayer(name='9. Reasoning Layer', nodes=['Explanation Agent'], purpose='예측, 위험도, 문서 근거, 안전 게이트를 결합해 답변 생성'))
-        if diagnostic.requires_report:
-            layers.append(AgentLayer(name='10. Documentation Layer', nodes=['Report Agent'], purpose='점검/정비 보고서 초안 생성'))
         layers.append(AgentLayer(name='11. Audit & Persistence Layer', nodes=['Evaluation / Audit Agent', 'History Store'], purpose='금지 표현, 안전 게이트 준수, 실행 이력 저장'))
         return layers

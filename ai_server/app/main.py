@@ -10,30 +10,21 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.agent.graph import ManufacturingAgentGraph
 from app.agent.root_graph import RootManufacturingGraph
 from app.config import API_AUTH_ENABLED, APP_NAME, APP_VERSION, CORS_ALLOW_ORIGINS, LLM_ALLOW_EXPENSIVE_MODELS, LLM_MODEL, LLM_MODEL_CATALOG, LLM_PROVIDER, USD_KRW_EXCHANGE_RATE
 from app.errors import AppError
-from app.schemas import (
-    AgentRequest,
-    AgentResponse,
-    AgentSendRequest,
-    EvaluationRequest,
-    EvaluationResponse,
-    PredictionRequest,
-    PredictionResponse,
-    RagChunk,
-    RagSearchRequest,
-    UserCreateRequest,
-    UserResponse,
-    UserUpdateRequest,
-)
+from app.schemas.agent import AgentRequest, AgentResponse, AgentSendRequest
+from app.schemas.evaluation import EvaluationRequest, EvaluationResponse
+from app.schemas.prediction import PredictionRequest, PredictionResponse
+from app.schemas.rag import RagChunk, RagSearchRequest
+from app.schemas.user import UserCreateRequest, UserResponse, UserUpdateRequest
 from app.security import require_api_key
 from app.services.domain_service import DomainKnowledgeService
 from app.services.evaluation_service import evaluate_answer
 from app.services.llm_service import LLMService
 from app.services.prediction_service import PredictionService
 from app.services.rag_service import RagService
+from app.services.safety_validation_service import SafetyValidationService
 from app.services.context_service import ContextService
 from app.services.memory_service import MemoryService
 from app.services.user_service import UserService
@@ -42,7 +33,7 @@ from app.storage.sqlite_store import SQLiteStore
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
-    description='Manufacturing-domain FastAPI Agent: AI4I prediction + domain catalogs + safety gates + RAG + documentation',
+    description='Manufacturing-domain FastAPI Agent: AI4I prediction + domain catalogs + safety gates + RAG',
 )
 app.add_middleware(
     CORSMiddleware,
@@ -58,8 +49,8 @@ prediction_service = PredictionService()
 rag_service = RagService()
 llm_service = LLMService()
 domain_service = DomainKnowledgeService()
+safety_validator = SafetyValidationService()
 store = SQLiteStore()
-agent_graph = ManufacturingAgentGraph(prediction_service, rag_service, llm_service)
 history_store = store
 user_service = UserService(store)
 context_service = ContextService(store)
@@ -69,7 +60,9 @@ root_graph = RootManufacturingGraph(
     user_service=user_service,
     context_service=context_service,
     memory_service=memory_service,
-    heavy_graph=agent_graph,
+    prediction_service=prediction_service,
+    domain_service=domain_service,
+    safety_validator=safety_validator,
     llm_service=llm_service,
     rag_service=rag_service,
 )
@@ -94,11 +87,17 @@ def health():
     equipment = (domain_service.equipment_taxonomy.get('equipment') or {}).keys()
     failure_modes = (domain_service.failure_catalog.get('failure_modes') or {}).keys()
     safety_gates = (domain_service.safety_matrix.get('safety_gates') or {}).keys()
+    rag_health = rag_service.corpus_health()
+    rag_chunk_count = rag_health.get('chroma_count')
+    if rag_chunk_count is None and rag_health.get('backend') == 'jsonl_dev':
+        rag_chunk_count = len(rag_service.chunks)
     return {
         'status': 'ok',
         'app': APP_NAME,
         'version': APP_VERSION,
-        'rag_chunks': len(rag_service.chunks),
+        'rag_chunks': rag_chunk_count,
+        'rag_backend': rag_health.get('backend'),
+        'rag_error': rag_health.get('error'),
         'domain_equipment_types': list(equipment),
         'domain_failure_modes': list(failure_modes),
         'domain_safety_gates': list(safety_gates),
@@ -124,9 +123,17 @@ def llm_models():
 
 @app.get('/ready')
 def ready():
+    rag_health = rag_service.corpus_health()
+    rag_ready = (
+        rag_health.get('backend') == 'chroma' and bool(rag_health.get('chroma_count'))
+    ) or (
+        rag_health.get('backend') == 'jsonl_dev' and bool(rag_service.chunks)
+    )
     return {
-        'status': 'ready' if rag_service.chunks and domain_service.failure_catalog else 'degraded',
-        'rag_ready': bool(rag_service.chunks),
+        'status': 'ready' if rag_ready and domain_service.failure_catalog else 'degraded',
+        'rag_ready': rag_ready,
+        'rag_backend': rag_health.get('backend'),
+        'rag_error': rag_health.get('error'),
         'domain_ready': bool(domain_service.failure_catalog),
         'history_ready': history_store.ready(),
         'prediction_model_loaded': prediction_service.bundle is not None,
@@ -178,7 +185,6 @@ def to_agent_request(req: AgentSendRequest, *, user_context: dict | None = None,
         question=req.message if question is None else question,
         process_data=req.process_data,
         inspection_notes=req.inspection_notes,
-        generate_report=req.generate_report,
         top_k=req.top_k,
         session_id=req.session_id,
         mode=req.mode,
@@ -251,7 +257,7 @@ def preview_route_endpoint(req: AgentSendRequest):
 def preview_plan(req: AgentSendRequest):
     """Preview the manufacturing supervisor route and domain context without final LLM answer."""
     internal = prepare_agent_request(req)
-    planning_result = agent_graph.diagnostic_planner.plan(request=internal)
+    planning_result = root_graph.diagnostic_planner.plan(request=internal)
     plan = planning_result.agent_plan
     prediction = prediction_service.predict(req.process_data) if req.process_data and plan.prediction_required else None
     mfg_context = domain_service.build_context(internal, prediction)
@@ -315,11 +321,6 @@ def send_agent_stream(req: AgentSendRequest):
             yield json.dumps(item, ensure_ascii=False, default=str) + '\n'
 
     return StreamingResponse(stream(), media_type='application/x-ndjson')
-
-@app.post('/agent/run', response_model=AgentResponse, dependencies=[Depends(require_api_key)])
-def run_agent(req: AgentRequest):
-    """Compatibility API for the original MVP. New clients should prefer /agent/send."""
-    return agent_graph.run(req)
 
 @app.get('/history', dependencies=[Depends(require_api_key)])
 def history(limit: int = 50, user_id: str | None = None):

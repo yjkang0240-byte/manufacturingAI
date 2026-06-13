@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas import ManufacturingContext, PredictionResponse
+from app.schemas.domain import ManufacturingContext
+from app.schemas.prediction import PredictionResponse
 
 
 class RecommendationBuilder:

@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.schemas import AgentResponse
+from app.schemas.agent import AgentResponse
 from app.agent.context.schemas import AnswerMemory, RecommendedAction
 
 

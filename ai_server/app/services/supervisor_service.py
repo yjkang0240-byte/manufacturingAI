@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from app.config import AGENT_SUPERVISOR_LLM_REFINEMENT
-from app.schemas import AgentLayer, AgentPlan, AgentRequest, LLMUsageRecord
+from app.schemas.agent import AgentLayer, AgentPlan, AgentRequest, LLMUsageRecord
 from app.services.llm_service import LLMService, PLAN_SCHEMA
 
 class SupervisorService:
@@ -12,7 +12,7 @@ class SupervisorService:
     This version is not a generic keyword router. It creates a manufacturing
     execution graph that separates asset context, process conditions, failure
     modes, risk/priority, procedure retrieval, safety gates, action planning,
-    report generation, and audit/persistence.
+    answer synthesis, and audit/persistence.
     """
 
     def __init__(self, llm_service: LLMService | None = None):
@@ -33,19 +33,18 @@ class SupervisorService:
         This does not blindly restart the whole graph. It preserves mandatory
         manufacturing stages and strengthens only the parts that commonly need a
         second pass: retrieval, safety gate coverage, action planning, and final
-        explanation/report generation.
+        explanation generation.
         """
         findings = [str(x) for x in audit_findings if str(x).strip()]
         finding_blob = ' '.join(findings).lower()
         prediction_required = previous.prediction_required or bool(req.process_data)
         safety_required = True if any(k in finding_blob for k in ['safety', '안전', 'gate', 'loto', '검증']) else previous.safety_required
-        report_required = previous.report_required
         rag_required = True if any(k in finding_blob for k in ['rag', '문서', '근거', 'citation', 'retrieval']) else previous.rag_required
         safety_gate_required = True if safety_required or prediction_required else previous.safety_gate_required
         action_plan_required = True
         process_condition_required = prediction_required and bool(req.process_data)
         failure_mode_required = prediction_required
-        document_scope = self._document_scope(prediction_required, safety_required, report_required, rag_required)
+        document_scope = self._document_scope(prediction_required, safety_required, rag_required)
         correction_terms = [
             'audit retry',
             'required safety gate checks',
@@ -77,7 +76,6 @@ class SupervisorService:
             rag_required=rag_required,
             safety_gate_required=safety_gate_required,
             action_plan_required=action_plan_required,
-            report_required=report_required,
         )
         required_nodes = [node for layer in layers for node in layer.nodes]
         return AgentPlan(
@@ -86,7 +84,6 @@ class SupervisorService:
             prediction_required=prediction_required,
             rag_required=rag_required,
             safety_required=safety_required,
-            report_required=report_required,
             domain_context_required=True,
             asset_context_required=True,
             process_condition_required=process_condition_required,
@@ -104,13 +101,12 @@ class SupervisorService:
         )
 
     def _deterministic_plan(self, req: AgentRequest) -> AgentPlan:
-        from app.agent.heavy.diagnostic_planner import DiagnosticFallbackPolicy
+        from app.agent.heavy.diagnostic_planner import DeterministicDiagnosticPolicy
 
-        diagnostic = DiagnosticFallbackPolicy().plan(req)
+        diagnostic = DeterministicDiagnosticPolicy().plan(req)
         intent = self._intent(
             diagnostic.requires_prediction,
             diagnostic.requires_safety,
-            diagnostic.requires_report,
             diagnostic.requires_knowledge,
             diagnostic.requires_rag,
         )
@@ -122,7 +118,6 @@ class SupervisorService:
             rag_required=diagnostic.requires_rag,
             safety_gate_required=diagnostic.requires_safety_gate,
             action_plan_required=diagnostic.requires_action_plan,
-            report_required=diagnostic.requires_report,
         )
         required_nodes = [node for layer in layers for node in layer.nodes]
         return AgentPlan(
@@ -131,7 +126,6 @@ class SupervisorService:
             prediction_required=diagnostic.requires_prediction,
             rag_required=diagnostic.requires_rag,
             safety_required=diagnostic.requires_safety,
-            report_required=diagnostic.requires_report,
             domain_context_required=True,
             asset_context_required=diagnostic.requires_asset_context,
             process_condition_required=diagnostic.requires_process_condition,
@@ -163,7 +157,6 @@ class SupervisorService:
             'question': req.question,
             'has_process_data': req.process_data is not None,
             'has_inspection_notes': bool(req.inspection_notes),
-            'generate_report': req.generate_report,
             'requested_mode': req.mode,
             'base_plan': base.model_dump(),
             'manufacturing_policy': {
@@ -175,8 +168,9 @@ class SupervisorService:
         }
         system = (
             '당신은 제조 AI 시스템의 Manufacturing Supervisor입니다. '
-            '요청을 prediction, knowledge_qa, safety_ops, documentation, hybrid 중 하나로 분류하고, '
-            '제조 업무 단계(Asset, Process, Failure Mode, Risk, Retrieval, Safety Gate, Action, Report)를 고려해 JSON으로 반환하세요. '
+            '요청을 prediction, knowledge_qa, safety_ops, hybrid, general 중 하나로 분류하고, '
+            '제조 업무 단계(Asset, Process, Failure Mode, Risk, Retrieval, Safety Gate, Action)를 고려해 JSON으로 반환하세요. '
+            '별도 report 실행 경로는 사용하지 않으며, 보고서 형식 요청은 answer 본문 스타일로만 처리합니다. '
             '단 process_data가 있으면 prediction_required=true를 유지하고, 정비/안전 키워드가 있으면 safety_gate_required=true를 유지해야 합니다.'
         )
         data = self.llm_service.generate_json(
@@ -192,18 +186,17 @@ class SupervisorService:
             return None
         prediction_required = base.prediction_required or bool(data.get('prediction_required'))
         safety_required = base.safety_required or bool(data.get('safety_required'))
-        report_required = base.report_required or bool(data.get('report_required'))
-        rag_required = base.rag_required or bool(data.get('rag_required')) or safety_required or report_required
+        rag_required = base.rag_required or bool(data.get('rag_required')) or safety_required
         asset_context_required = True
         process_condition_required = prediction_required and bool(req.process_data)
         failure_mode_required = prediction_required
         safety_gate_required = base.safety_gate_required or safety_required or prediction_required
-        action_plan_required = base.action_plan_required or prediction_required or safety_required or report_required or rag_required
-        document_scope = self._document_scope(prediction_required, safety_required, report_required, rag_required)
-        layers = self._layers(asset_context_required, process_condition_required, failure_mode_required, True, rag_required, safety_gate_required, action_plan_required, report_required)
+        action_plan_required = base.action_plan_required or prediction_required or safety_required or rag_required
+        document_scope = self._document_scope(prediction_required, safety_required, rag_required)
+        layers = self._layers(asset_context_required, process_condition_required, failure_mode_required, True, rag_required, safety_gate_required, action_plan_required)
         required_nodes = [node for layer in layers for node in layer.nodes]
-        intent = data.get('intent') if data.get('intent') in {'prediction','knowledge_qa','safety_ops','documentation','hybrid','general'} else base.intent
-        if sum([prediction_required, safety_required, report_required, intent == 'knowledge_qa']) >= 2:
+        intent = data.get('intent') if data.get('intent') in {'prediction','knowledge_qa','safety_ops','hybrid','general'} else base.intent
+        if sum([prediction_required, safety_required, intent == 'knowledge_qa']) >= 2:
             intent = 'hybrid'
         return AgentPlan(
             intent=intent,
@@ -211,7 +204,6 @@ class SupervisorService:
             prediction_required=prediction_required,
             rag_required=rag_required,
             safety_required=safety_required,
-            report_required=report_required,
             domain_context_required=True,
             asset_context_required=asset_context_required,
             process_condition_required=process_condition_required,
@@ -229,33 +221,29 @@ class SupervisorService:
         )
 
     @staticmethod
-    def _intent(prediction: bool, safety: bool, report: bool, knowledge: bool, rag: bool) -> str:
-        if sum([prediction, safety, report, knowledge]) >= 2:
+    def _intent(prediction: bool, safety: bool, knowledge: bool, rag: bool) -> str:
+        if sum([prediction, safety, knowledge]) >= 2:
             return 'hybrid'
         if prediction:
             return 'prediction'
         if safety:
             return 'safety_ops'
-        if report:
-            return 'documentation'
         if knowledge or rag:
             return 'knowledge_qa'
         return 'general'
 
     @staticmethod
-    def _document_scope(prediction: bool, safety: bool, report: bool, knowledge: bool) -> list[str]:
+    def _document_scope(prediction: bool, safety: bool, knowledge: bool) -> list[str]:
         scope: list[str] = []
         if prediction:
             scope += ['troubleshooting', 'preventive_maintenance']
         if safety:
             scope += ['safety_standard', 'safety_procedure']
-        if report:
-            scope += ['technical_document_guide', 'preventive_maintenance']
         if knowledge:
             scope += ['operator_manual', 'troubleshooting', 'equipment_taxonomy']
         return list(dict.fromkeys(scope)) or ['operator_manual', 'troubleshooting', 'safety_standard']
 
-    def _layers(self, asset_context_required: bool, process_condition_required: bool, failure_mode_required: bool, risk_priority_required: bool, rag_required: bool, safety_gate_required: bool, action_plan_required: bool, report_required: bool) -> list[AgentLayer]:
+    def _layers(self, asset_context_required: bool, process_condition_required: bool, failure_mode_required: bool, risk_priority_required: bool, rag_required: bool, safety_gate_required: bool, action_plan_required: bool) -> list[AgentLayer]:
         layers: list[AgentLayer] = [
             AgentLayer(name='0. Input Layer', nodes=['Input Normalizer'], purpose='질문, 공정 데이터, 점검 메모를 표준 상태로 정리'),
             AgentLayer(name='1. Manufacturing Supervisor Layer', nodes=['Manufacturing Intent Classifier', 'Manufacturing Route Planner'], purpose='제조 업무 관점으로 의도와 실행 순서를 결정'),
@@ -275,8 +263,6 @@ class SupervisorService:
         if action_plan_required:
             layers.append(AgentLayer(name='8. Action Planning Layer', nodes=['Action Planner Agent'], purpose='실행 가능한 점검 순서와 승인 필요 여부 구조화'))
         layers.append(AgentLayer(name='9. Reasoning Layer', nodes=['Explanation Agent'], purpose='예측, 위험도, 문서 근거, 안전 게이트를 결합해 답변 생성'))
-        if report_required:
-            layers.append(AgentLayer(name='10. Documentation Layer', nodes=['Report Agent'], purpose='점검/정비 보고서 초안 생성'))
         layers.append(AgentLayer(name='11. Audit & Persistence Layer', nodes=['Evaluation / Audit Agent', 'History Store'], purpose='금지 표현, 안전 게이트 준수, 실행 이력 저장'))
         return layers
 
@@ -286,7 +272,5 @@ class SupervisorService:
             parts.extend(['공정 데이터', '토크', '공구 마모', '온도', '회전수', '정비 점검', 'CNC', 'Spindle', 'Tool Changer'])
         if req.inspection_notes:
             parts.append(req.inspection_notes)
-        if req.generate_report:
-            parts.extend(['점검 보고서', '정비 보고서', '점검 항목', '기술문서'])
         parts.extend(document_scope)
         return ' '.join(p for p in parts if p).strip() or 'manufacturing maintenance safety troubleshooting'

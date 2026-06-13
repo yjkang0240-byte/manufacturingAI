@@ -21,7 +21,7 @@ from app.config import (
     USD_KRW_EXCHANGE_RATE,
 )
 from app.errors import LLMUnavailableError, ModelSelectionError
-from app.schemas import LLMUsageRecord
+from app.schemas.agent import LLMUsageRecord
 from app.services.observability_service import record_llm_usage_span
 
 
@@ -273,16 +273,15 @@ PLAN_SCHEMA: dict[str, Any] = {
     'type': 'object',
     'additionalProperties': False,
     'properties': {
-        'intent': {'type': 'string', 'enum': ['prediction','knowledge_qa','safety_ops','documentation','hybrid','general']},
+        'intent': {'type': 'string', 'enum': ['prediction','knowledge_qa','safety_ops','hybrid','general']},
         'confidence': {'type': 'number'},
         'prediction_required': {'type': 'boolean'},
         'rag_required': {'type': 'boolean'},
         'safety_required': {'type': 'boolean'},
-        'report_required': {'type': 'boolean'},
         'rag_query': {'type': 'string'},
         'rationale': {'type': 'string'},
     },
-    'required': ['intent','confidence','prediction_required','rag_required','safety_required','report_required','rag_query','rationale'],
+    'required': ['intent','confidence','prediction_required','rag_required','safety_required','rag_query','rationale'],
 }
 
 ANSWER_SCHEMA: dict[str, Any] = {

@@ -11,7 +11,6 @@ from app.agent.routing.hard_gates import (
     MetaFeedbackGate,
     ProcessDataDiagnosisGate,
     RecommendedActionFollowupGate,
-    ReportGate,
     SafetyRequestGate,
 )
 
@@ -24,7 +23,6 @@ class GateRegistry:
             MetaFeedbackGate(),
             RecommendedActionFollowupGate(),
             ProcessDataDiagnosisGate(),
-            ReportGate(),
             GlossaryConceptGate(),
             SafetyRequestGate(),
             DocumentRequestGate(),

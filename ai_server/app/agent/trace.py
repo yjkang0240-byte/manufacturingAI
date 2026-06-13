@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from app.schemas import AgentTraceStep
+from app.schemas.agent import AgentTraceStep
 
 
 def utc_iso() -> str:
@@ -55,4 +55,3 @@ def to_agent_trace_steps(trace: list[dict[str, Any]]) -> list[AgentTraceStep]:
             detail_parts.append(f'error={item.get("error")}')
         steps.append(AgentTraceStep(step=str(node_id), detail=' | '.join(part for part in detail_parts if part)))
     return steps
-

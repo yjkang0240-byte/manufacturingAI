@@ -11,6 +11,16 @@ safety_gates:
       - 잔류 에너지 해소 여부 확인
       - 승인된 담당자가 LOTO 절차를 적용했는지 확인
       - 설비가 무전압/무에너지 상태인지 현장 절차로 확인
+    document_search_terms:
+      - 에너지 차단
+      - 잠금 표지
+      - 잠금·표지
+      - LOTO
+      - lockout
+      - tagout
+      - hazardous energy
+      - 무전압
+      - 잔류 에너지
     forbidden_agent_actions:
       - 설비를 자동으로 정지했다고 말하기
       - 안전 상태를 AI가 보증한다고 말하기
@@ -20,12 +30,23 @@ safety_gates:
     name_ko: 회전부/끼임 지점 방호 확인
     description_ko: 스핀들, 공구, 축, 벨트 등 회전부 또는 끼임 지점 접근 전 방호장치와 비상정지 장치를 확인한다.
     severity: high
-    triggers: [회전부, 스핀들, 공구, tool, spindle, rpm, rotating, OSF, TWF]
+    triggers: [회전부, 스핀들, 공구, 방호덮개, 비상정지장치, 공작물 고정, 드릴기, 선반, 보링기, 유압절곡기, 사출성형기, tool, spindle, rpm, rotating, OSF, TWF]
     required_checks:
       - 운전 중 회전부 접근 금지
       - 가드/인터록/방호장치 상태 확인
       - 비상정지 장치 위치와 동작 가능 상태 확인
       - 비산물/칩 위험에 대한 보호구 확인
+    document_search_terms:
+      - 회전기계
+      - 회전부
+      - 끼임
+      - 절단
+      - 방호장치
+      - 가드
+      - 인터록
+      - 비상정지
+      - machine guarding
+      - rotating parts
     forbidden_agent_actions:
       - 운전 중 가드 제거를 지시하기
       - 운전 중 손이나 도구로 회전부를 점검하라고 말하기
@@ -41,6 +62,12 @@ safety_gates:
       - 냉각수/냉각계통 상태 확인
       - 보호장갑 등 적절한 보호구 착용 여부 확인
       - 충분한 냉각 후 점검 여부 확인
+    document_search_terms:
+      - 고온 표면
+      - 냉각계통
+      - 냉각수
+      - 방열
+      - 화상 위험
     forbidden_agent_actions:
       - 고온 부품을 즉시 손으로 만지라고 말하기
       - 냉각 장치를 AI가 자동 제어한다고 말하기
@@ -55,6 +82,12 @@ safety_gates:
       - 전원 차단 및 무전압 확인
       - 제어반 개방 전 사내 전기안전 절차 확인
       - 과전류/차단기/경보 이력 확인
+    document_search_terms:
+      - 전기 격리
+      - 제어반
+      - 무전압
+      - 전원 차단
+      - electrical isolation
     forbidden_agent_actions:
       - 전기함을 임의로 열라고 지시하기
       - 무전압 확인 없이 작업하라고 말하기
@@ -70,6 +103,12 @@ safety_gates:
       - 관리자/안전관리자에게 즉시 보고
       - 필요 시 지정 대피로를 따라 대피
       - 인명 안전을 최우선으로 판단
+    document_search_terms:
+      - 비상대응
+      - 대피
+      - 화재
+      - 누출
+      - emergency response
     forbidden_agent_actions:
       - 현장 비상대응 책임자를 대체하기
       - 대피가 필요한 상황에서 계속 작업을 지시하기
@@ -84,6 +123,11 @@ safety_gates:
       - 최근 경보/정비 이력 확인
       - 담당자 현장 점검 수행
       - 필요 시 제조사 또는 안전관리자 문의
+    document_search_terms:
+      - 담당자 검토
+      - 정비 이력
+      - 경보 이력
+      - 원인 불명
     forbidden_agent_actions:
       - 원인을 단정하기
       - 담당자 확인 없이 조치를 확정하기

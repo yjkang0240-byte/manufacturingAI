@@ -1,3 +1,8 @@
+# Historical Record
+
+This review may mention removed endpoints and legacy classes. It is not the
+current runtime contract.
+
 # 코드 부정 평가 및 보완 필요 사항
 
 작성일: 2026-06-12

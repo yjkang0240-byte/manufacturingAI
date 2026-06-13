@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from app.schemas import EvaluationResponse, ManufacturingContext
+from app.schemas.domain import ManufacturingContext
+from app.schemas.evaluation import EvaluationResponse
 
 WEIGHTS = {
     'faithfulness_to_tool_output': 0.20,

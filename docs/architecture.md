@@ -6,20 +6,20 @@
 User Request
   -> RootManufacturingGraph
   -> Checkpoint v2 thread lookup (thread_id = user_id:session_id)
-  -> ContextCompressor
-  -> ContextResolver
-  -> ContextPackBuilder
+  -> ContextSubAgent
   -> IntentGateway / structured classifier
   -> selected path
-  -> answer node or heavy manufacturing path
+  -> answer node or PlanningSubAgent + manufacturing path
+  -> RagEvidenceSubAgent when document evidence is required
+  -> SafetySubAgent when safety gates are required
   -> FormatterRegistry
-  -> AnswerMemoryWriter
+  -> MemorySubAgent
   -> checkpoint v2 save
 ```
 
-`root_graph.py` is kept as the orchestration boundary. Context resolution,
-context packing, answer memory, formatting, safety policy, and checkpointing
-are handled by dedicated modules.
+`root_graph.py` is the top-level orchestration boundary. Context resolution,
+context packing, planning, RAG evidence, safety policy, and memory update are
+handled by dedicated LangGraph SubAgents with their own request-scoped state.
 
 ## ContextResolution
 
@@ -84,7 +84,7 @@ Current formatter keys:
 - `recommended_action_item_explanation`
 - `safety_answer`
 - `clarification`
-- `fallback`
+- explicit degrade path
 
 This prevents the old problem where a lightweight answer could accidentally
 inherit the heavy analysis format (`판정`, `위험도`, `권장 조치`, etc.).
@@ -178,14 +178,13 @@ the intent classifier. Gate definitions live under `app/agent/routing/`.
 | `ControlScopeGate` | stop/start/control terms | refuse direct machine control | treating unsafe control as normal Q&A | final safety/scope gate | gateway tests |
 | `MetaFeedbackGate` | bug/context/routing feedback | route product feedback away from manufacturing analysis | heavy report format on system feedback | final meta route | `test_meta_feedback_preserves_focus_policy` |
 | `ProcessDataDiagnosisGate` | risk/failure/current condition terms with process data | force real process-data questions to heavy analysis | lightweight answer for risk judgement | final hard gate only when `process_data` exists | `test_process_data_risk_question_is_hard_gated_to_supervisor` |
-| `ReportGate` | report/documentation terms or `generate_report` | route report generation to heavy/report flow | losing report request in lightweight path | final hard gate | route behavior tests |
 | `SafetyRequestGate` | safety/maintenance terms | require safety-aware planning | unsafe lightweight maintenance advice | final safety hard gate | `test_safety_request_is_not_lightweight` |
 | `DocumentRequestGate` | document/source terms | route document-backed question to RAG | unsupported citation request | final lightweight RAG gate | gateway tests |
 | `GlossaryConceptGate` | simple concept terms + glossary hit | no-LLM glossary fast path | unnecessary LLM/heavy path for concepts | final no-LLM fast path, only with glossary hit | `test_no_llm_glossary_concept_uses_fast_path` |
 | `RecommendedActionFollowupGate` | `ContextResolution.followup_type` | route action recap/item follow-ups to dedicated formatters | action recap falling into `general_lightweight_answer` | final follow-up gate after ContextResolver | `test_recommended_action_followup_routes_to_recap_not_lightweight` |
 | `FollowupCandidateGate` | pronoun/reason/action signals | expose a candidate signal only | candidate signal accidentally selecting a path | candidate signal, never final | `test_followup_candidate_gate_does_not_make_final_route_decision` |
 | `followup_signals.py` markers | pronoun/reason/action signals | produce resolver input signals | treating short follow-up as standalone | candidate signal only | `ContextResolver` tests |
-| `DiagnosticFallbackPolicy` | manufacturing planning hints | deterministic heavy-route fallback policy | missing RAG/safety/prediction stages in heavy path | structured `DiagnosticPlan`, then converted to `AgentPlan` | `test_supervisor_keyword_policy_is_hidden_behind_diagnostic_planner`, `test_diagnostic_planner_returns_structured_plan` |
+| `DeterministicDiagnosticPolicy` | manufacturing planning hints | deterministic heavy-route policy | missing RAG/safety/prediction stages in heavy path | structured `DiagnosticPlan`, then converted to `AgentPlan` | `test_supervisor_keyword_policy_is_hidden_behind_diagnostic_planner`, `test_diagnostic_planner_returns_structured_plan` |
 
 Risk note: deterministic manufacturing planning still exists, but it is hidden
 behind `DiagnosticPlanner` and represented as a structured `DiagnosticPlan`
@@ -194,28 +193,27 @@ keyword matches directly.
 
 ## Heavy Manufacturing Path Audit
 
-The heavy path is partially separated by LangGraph nodes:
+The heavy path is separated by root nodes and SubAgents:
 
-- `supervisor_planning`: diagnostic planning/data requirement decision
+- `supervisor_planning`: invokes `PlanningSubAgent`
 - `manufacturing_analysis`: prediction and domain context
-- `evidence_retrieval`: RAG retrieval and weak-evidence replan
-- `safety`: safety gate/action payload preparation
+- `evidence_retrieval`: invokes `RagEvidenceSubAgent`
+- `safety`: invokes `SafetySubAgent`
 - `response_synthesis`: LLM answer composition and safety validation
-- `documentation`: report generation
 - `response_packager`: public response object
+- `focus_updater`: invokes `MemorySubAgent`
 
 Remaining coupling:
 
 - `SupervisorService` still owns LLM refinement and replan behavior, but
-  deterministic fallback planning is isolated behind `DiagnosticPlanner`.
-- RAG is now split by role, but future work can promote these classes into
-  first-class LangGraph subgraph nodes with independent retries and metrics.
+  deterministic planning is isolated behind `DiagnosticPlanner`.
+- Manufacturing analysis and response synthesis remain root-level nodes.
 
 Current heavy modules:
 
 1. `DiagnosticPlanner`
 2. `RagQueryPlanner`
-3. `Retriever`
+3. `RagEvidenceSubAgent`
 4. `EvidenceFilter`
 5. `EvidenceGrader`
 6. `CitationBuilder`
@@ -228,12 +226,13 @@ RAG role contracts:
 | Component | Responsibility | Explicit Non-Responsibility |
 | --- | --- | --- |
 | `RagQueryPlanner` | build retrieval request/query | no retrieval execution |
-| `Retriever` | execute search against `RagService` | no query planning or grading |
+| `RagEvidenceSubAgent` | coordinate query planning, retrieval, filtering, grading, citation, and trace | no prediction or final answer composition |
+| `RagService` / `ChromaRetriever` | execute Chroma search | no query planning, grading, or JSONL fallback in production |
 | `EvidenceFilter` | dedupe and remove empty evidence | no relevance grading |
 | `EvidenceGrader` | decide usable/weak evidence | no citation building |
 | `CitationBuilder` | build citations from graded evidence | no retrieval or grading |
 
-ManufacturingAgentGraph removed method audit:
+Legacy graph removal audit:
 
 | Removed Method | Replacement |
 | --- | --- |
@@ -250,8 +249,8 @@ Recommended next work:
    subgraph nodes with local replan edges
 2. make `RecommendationBuilder` produce rich rationale/safety notes from domain
    catalog metadata
-3. keep `ManufacturingAgentGraph` wrappers thin or remove them once all callers
-   use dedicated modules directly
+3. keep root graph dependencies explicit; do not reintroduce compatibility
+   wrappers
 
 ## Architecture Contract Tests
 
@@ -266,12 +265,12 @@ Recommended next work:
 | general lightweight formatter does not infer recap from action presence | `test_formatter_does_not_infer_recap_from_actions_on_general_path` |
 | fast concept formatter does not leak heavy format | `test_fast_concept_formatter_does_not_leak_heavy_format` |
 | follow-up candidate gate is not final | `test_followup_candidate_gate_does_not_make_final_route_decision` |
-| supervisor keyword fallback is hidden behind diagnostic planner | `test_supervisor_keyword_policy_is_hidden_behind_diagnostic_planner` |
+| supervisor keyword policy is hidden behind diagnostic planner | `test_supervisor_keyword_policy_is_hidden_behind_diagnostic_planner` |
 | diagnostic planner returns structured plan | `test_diagnostic_planner_returns_structured_plan` |
 | RAG query planner does not retrieve directly | `test_rag_query_planner_does_not_retrieve_directly` |
 | evidence grader does not build citations | `test_evidence_grader_does_not_build_citations` |
 | citation builder uses graded evidence | `test_citation_builder_uses_graded_evidence` |
-| ManufacturingAgentGraph wrappers stay thin | `test_manufacturing_graph_wrappers_are_thin` |
+| legacy imperative graph module is removed | `test_manufacturing_graph_legacy_module_removed` |
 
 ## Current Guarantees
 
@@ -288,11 +287,10 @@ Recommended next work:
 
 ## Remaining Risks
 
-- `DiagnosticFallbackPolicy` is still deterministic. It is hidden behind
-  `DiagnosticPlanner`, but the next step is to make planning consume richer
+- `DeterministicDiagnosticPolicy` is hidden behind `DiagnosticPlanner`, but the
+  next step is to make planning consume richer
   `IntentResult` and `ContextPacks` signals.
 - RAG roles are split into classes, but they are not yet fully separate
   LangGraph subgraph nodes with independent retry, latency, and quality metrics.
-- `ManufacturingAgentGraph` no longer exposes helper wrappers for RAG, safety,
-  actions, or payload building. Root graph and heavy graph call dedicated
-  modules directly.
+- The legacy imperative graph module is removed. Root graph and the RAG
+  Evidence SubAgent call dedicated modules directly.

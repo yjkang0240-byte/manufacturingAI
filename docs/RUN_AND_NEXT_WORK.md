@@ -6,7 +6,7 @@
 
 - API 보안 설정 추가
   - `API_AUTH_ENABLED`, `API_KEY`, `CORS_ALLOW_ORIGINS` 환경변수를 추가했다.
-  - `/predict`, `/agent/send`, `/agent/run`, `/rag/search`, `/history`, 도메인 catalog API는 API key 보호를 적용할 수 있다.
+  - `/predict`, `/agent/send`, `/rag/search`, `/history`, 도메인 catalog API는 API key 보호를 적용할 수 있다.
 - 입력 검증 강화
   - AI4I `type`을 `L/M/H`로 제한했다.
   - 온도, 회전수, 토크, 공구 마모 시간 범위를 Pydantic에서 검증한다.
@@ -145,7 +145,7 @@ pytest
 
 - Agent 탭
   - 기본 질문으로 실행했을 때 `안전 확인`, `권장 조치`, `주의 사항`이 포함되는지 본다.
-  - `보고서 생성`을 켜면 보고서 초안이 생성되는지 본다.
+  - 보고서 형식 요청은 별도 체크박스 없이 일반 답변 본문으로 정리되는지 본다.
   - 위험 입력을 넣었을 때 warnings에 학습 분포 경고가 나오는지 본다.
   - 근거가 부족한 질문을 넣었을 때 진행 과정에 `Supervisor Re-plan`이 표시되는지 본다.
   - LLM 사용 시 상단 metric에서 `LLM calls`, `Re-plans`, input/output/total tokens, 예상 비용이 표시되는지 본다.

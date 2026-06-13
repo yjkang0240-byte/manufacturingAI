@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-from app.schemas import LLMUsageRecord, LLMUsageSummary
+from app.schemas.agent import LLMUsageRecord, LLMUsageSummary
 
 
 def record_llm_usage_span(record: LLMUsageRecord) -> None:

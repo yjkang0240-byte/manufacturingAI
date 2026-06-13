@@ -1,3 +1,7 @@
+# Historical Record
+
+This document is an implementation log, not the current runtime contract.
+
 # Manufacturing AI Agent Full Implementation Record
 
 이 문서는 제조 AI Agent 프로젝트에서 초반 지시부터 현재 RAG Vector DB 구축까지 진행한 전체 작업을 정리한 기록이다.
@@ -608,7 +612,7 @@ FormatterRegistry와 safety layer를 분리했다.
 
 ```text
 ManufacturingAgentGraph가 너무 많은 helper 책임을 갖고 있으면 분리하라.
-DiagnosticPlanner, RagQueryPlanner, Retriever, EvidenceFilter, EvidenceGrader,
+DiagnosticPlanner, RagEvidenceSubAgent, RagQueryPlanner, EvidenceFilter, EvidenceGrader,
 SafetyGateBuilder, RecommendationBuilder, StructuredAnswerPayloadBuilder로 나눠라.
 ```
 
@@ -636,7 +640,8 @@ heavy path를 모듈화했다.
 - `ai_server/app/agent/heavy/plan_translator.py`
 - `ai_server/app/agent/heavy/plan_refiner.py`
 - `ai_server/app/agent/heavy/rag_query_planner.py`
-- `ai_server/app/agent/heavy/retriever.py`
+- `ai_server/app/agent/rag_evidence/subagent.py`
+- `ai_server/app/agent/heavy/chroma_retriever.py`
 - `ai_server/app/agent/heavy/evidence_filter.py`
 - `ai_server/app/agent/heavy/evidence_grader.py`
 - `ai_server/app/agent/heavy/citation_builder.py`
@@ -870,7 +875,7 @@ serviceKey / KOSHA_API_KEY / OPENAI_API_KEY 검색 결과: 0건
 
 해야 할 일:
 
-- `RagService.search()` 또는 heavy `Retriever`가 Chroma collection 검색
+- `RagEvidenceSubAgent`가 `RagService` / `ChromaRetriever`를 통해 Chroma collection 검색
 - metadata filter 적용
   - `failure_modes`
   - `safety_gate`

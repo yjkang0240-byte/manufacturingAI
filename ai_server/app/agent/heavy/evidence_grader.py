@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.schemas import RagChunk
+from app.schemas.rag import RagChunk
 from app.agent.heavy.rag_schemas import EvidenceGrade
 
 

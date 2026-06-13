@@ -4,28 +4,36 @@ import math
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Any
 from app.config import CHUNKS_PATH, RAG_MIN_NORMALIZED_SCORE
 from app.errors import RagIndexUnavailableError
-from app.schemas import RagChunk
+from app.schemas.rag import RagChunk
+from app.services.chroma_retriever import ChromaRetriever
 
 TOKEN_RE = re.compile(r'[가-힣A-Za-z0-9_+#.-]+')
 
 class RagService:
-    """Lightweight lexical RAG service.
+    """Runtime RAG service.
 
-    The MVP intentionally uses a dependency-light keyword scorer so it always
-    runs in restricted environments. It can be replaced by Chroma/pgvector later
-    without changing the Agent API.
+    Chroma is the runtime evidence store. The local JSONL lexical index is used
+    only when Chroma is explicitly disabled for local tests or development.
     """
-    def __init__(self, chunks_path: Path | None = None, index_path: Path | None = None):
+    def __init__(
+        self,
+        chunks_path: Path | None = None,
+        chroma_retriever: ChromaRetriever | None = None,
+        use_chroma: bool = True,
+    ):
         self.chunks_path = chunks_path or CHUNKS_PATH
-        self.index_path = index_path
+        self.chroma_retriever = chroma_retriever or ChromaRetriever()
+        self.use_chroma = use_chroma
         self.chunks: list[dict] = []
         self._doc_tokens: list[Counter[str]] = []
         self._doc_lengths: list[int] = []
         self._avg_doc_length = 1.0
         self._idf: dict[str, float] = {}
-        self.load()
+        if not self.use_chroma:
+            self.load()
 
     def load(self) -> bool:
         if not self.chunks_path.exists():
@@ -58,9 +66,54 @@ class RagService:
         return [t.lower() for t in TOKEN_RE.findall(text or '') if len(t.strip()) >= 1]
 
     def search(self, query: str, top_k: int = 5, filters: dict | None = None) -> list[RagChunk]:
+        if self.use_chroma:
+            result = self.chroma_retriever.retrieve(query, top_k=top_k, filters=filters)
+            return result.chunks
+        return self._search_jsonl(query, top_k=top_k, filters=filters)
+
+    def search_with_diagnostics(self, query: str, top_k: int = 5, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.use_chroma:
+            result = self.chroma_retriever.retrieve(query, top_k=top_k, filters=filters)
+            diagnostics = result.diagnostics.model_dump()
+            diagnostics['backend'] = 'error' if result.diagnostics.error else 'chroma'
+            return {'chunks': result.chunks, 'diagnostics': diagnostics}
+        chunks = self._search_jsonl(query, top_k=top_k, filters=filters)
+        return {
+            'chunks': chunks,
+            'diagnostics': {
+                'requested_top_k': top_k,
+                'returned_chunks': len(chunks),
+                'backend': 'jsonl_dev',
+                'error': None,
+            },
+        }
+
+    def corpus_health(self) -> dict[str, Any]:
+        if not self.use_chroma:
+            return {'backend': 'jsonl_dev', 'chroma_count': None, 'error': None}
+        count, error = self.chroma_retriever.collection_count()
+        return {'backend': 'chroma' if error is None else 'error', 'chroma_count': count, 'error': error}
+
+    def metadata_search(self, terms: list[str], top_k: int = 5, *, allow_restricted: bool = False) -> dict[str, Any]:
+        if not self.use_chroma:
+            return {
+                'chunks': [],
+                'diagnostics': {
+                    'requested_top_k': top_k,
+                    'returned_chunks': 0,
+                    'backend': 'jsonl_dev',
+                    'error': None,
+                },
+            }
+        result = self.chroma_retriever.metadata_search(terms, top_k=top_k, allow_restricted=allow_restricted)
+        diagnostics = result.diagnostics.model_dump()
+        diagnostics['backend'] = 'metadata_error' if result.diagnostics.error else 'chroma_metadata'
+        return {'chunks': result.chunks, 'diagnostics': diagnostics}
+
+    def _search_jsonl(self, query: str, top_k: int = 5, filters: dict | None = None) -> list[RagChunk]:
         if not self.chunks:
             if not self.load():
-                return []
+                raise RagIndexUnavailableError('RAG JSONL dev index is unavailable')
         filters = filters or {}
         q_tokens = Counter(self._tokenize(query))
         if not q_tokens:
@@ -96,6 +149,7 @@ class RagService:
             if normalized < RAG_MIN_NORMALIZED_SCORE:
                 continue
             raw = dict(self.chunks[idx])
+            raw.setdefault('document_title', raw.get('title') or raw.get('doc_id') or 'Untitled document')
             raw['score'] = round(normalized, 4)
             results.append(RagChunk(**raw))
         return results

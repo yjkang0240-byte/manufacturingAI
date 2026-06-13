@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from app.agent.context import AnswerMemory, ContextPackBuilder, ContextResolver, RecommendedAction
 from app.agent.routing import GateContext, GateRegistry
-from app.schemas import AgentRequest, ProcessData
+from app.schemas.agent import AgentRequest
+from app.schemas.prediction import ProcessData
 from app.services.intent_classifier_service import IntentClassifierInput, IntentClassifierOutput, ResolvedReference
 from app.services.intent_gateway_service import IntentGatewayService
 

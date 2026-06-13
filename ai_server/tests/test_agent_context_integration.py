@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas import AgentRequest, AgentResponse
+from app.schemas.agent import AgentRequest, AgentResponse
 from app.services.user_service import UserService
 from app.storage.sqlite_store import SQLiteStore
 
@@ -17,4 +17,3 @@ def test_agent_run_history_stores_user_id(tmp_path):
     assert len(rows) == 1
     assert rows[0]['user_id'] == user['user_id']
     assert rows[0]['response']['context_used']['user_id'] == user['user_id']
-

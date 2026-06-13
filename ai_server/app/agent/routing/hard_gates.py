@@ -150,30 +150,6 @@ class ProcessDataDiagnosisGate(HardGate):
         )
 
 
-class ReportGate(HardGate):
-    name = 'report_request'
-    terms = ['보고서', '리포트', '초안', '기록', '문서화']
-
-    def evaluate(self, context: GateContext) -> GateResult:
-        if not (context.generate_report or contains_any(context.compact_question, self.terms)):
-            return GateResult()
-        return GateResult(
-            matched=True,
-            gate_name=self.name,
-            selected_path='supervisor_planning',
-            answer_type='report',
-            reason='보고서/기록 생성 요청입니다.',
-            confidence=0.9,
-            is_final=True,
-            category='report',
-            turn_type='report_request',
-            requires_rag=True,
-            requires_report=True,
-            resolved_reference={'type': 'report', 'text': '보고서', 'normalized': 'report', 'source': 'current_question', 'confidence': 0.9},
-            focus_update_policy='update',
-        )
-
-
 class GlossaryConceptGate(HardGate):
     name = 'glossary_concept'
     simple_terms = ['뭐야', '무엇', '정의', '설명', '란', '이란', '단점', '장점', '한계', '주의', '주의점', '볼 때', '봐야', '언제 확인']
@@ -233,9 +209,9 @@ class DocumentRequestGate(HardGate):
         return GateResult(
             matched=True,
             gate_name=self.name,
-            selected_path='lightweight_rag_answer',
+            selected_path='supervisor_planning',
             answer_type='explanation',
-            reason='문서 근거가 필요한 가벼운 지식 질문입니다.',
+            reason='문서 근거가 필요한 질문은 RAG Evidence SubAgent로 라우팅합니다.',
             confidence=0.8,
             is_final=True,
             category='document',

@@ -19,7 +19,7 @@
 1. Python AI Server 단독 실행
 2. AI4I 모델 학습
 3. 샘플 RAG 문서 색인 생성
-4. /agent/run API 테스트
+4. /agent/send API 테스트
 5. 공식 문서 수집 스크립트 실행
 6. Spring Boot 저장/조회 연동
 7. 골든 데이터셋 평가 추가

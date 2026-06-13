@@ -1,3 +1,8 @@
+# Historical Record
+
+This troubleshooting log may mention removed compatibility paths. It is not the
+current runtime contract.
+
 # Manufacturing AI Agent Troubleshooting Record - 2026-06-13
 
 이 문서는 제조 AI Agent를 고도화하면서 발견한 구조적 문제와 해결 과정을 정리한 트러블슈팅 기록이다. 단순 버그 수정 기록이 아니라, 기존 구조가 왜 불안정했는지, 어떤 구조로 바꿨는지, 그 결과 어떤 문제가 해결됐는지를 성과 중심으로 남긴다.
@@ -288,7 +293,7 @@ GateResult 필드:
 - `DiagnosticPlanToAgentPlanTranslator`
 - `PlanRefiner`
 - `RagQueryPlanner`
-- `Retriever`
+- `RagEvidenceSubAgent`
 - `EvidenceFilter`
 - `EvidenceGrader`
 - `CitationBuilder`
@@ -454,11 +459,12 @@ ManufacturingAgentGraph._make_rag_query(...)
 After:
 
 ```text
-RagQueryPlanner.plan(...)
-Retriever.retrieve(...)
-EvidenceFilter.filter(...)
-EvidenceGrader.grade(...)
-CitationBuilder.build(...)
+RagEvidenceSubAgent
+  -> plan_queries
+  -> retrieve
+  -> filter
+  -> grade
+  -> cite
 ```
 
 성과:

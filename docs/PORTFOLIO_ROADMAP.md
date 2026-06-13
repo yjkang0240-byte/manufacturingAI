@@ -175,7 +175,6 @@ docs/
 3. Agent 실행
    - 질문: `토크가 높고 공구 마모가 큰데 어떤 점검과 안전 절차를 확인해야 해?`
    - 공정 데이터 포함
-   - 보고서 생성 ON
 4. 진행 trace 설명
    - Supervisor
    - Prediction
