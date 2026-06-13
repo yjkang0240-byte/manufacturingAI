@@ -41,9 +41,9 @@ def ensure_dirs() -> None:
 
 
 def load_project_env() -> None:
-    for env_path in [PROJECT_ROOT / '.env', AI_SERVER_DIR / '.env']:
-        if env_path.exists():
-            load_dotenv(env_path, override=False)
+    env_path = AI_SERVER_DIR / '.env'
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 
 def env_value(name: str, default: str = '') -> str:

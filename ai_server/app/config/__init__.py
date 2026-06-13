@@ -6,11 +6,10 @@ from dotenv import load_dotenv
 AI_SERVER_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = AI_SERVER_DIR.parent
 
-# Load both project-level and ai_server-level env files.
-# Values already exported in the shell take precedence.
-for _env in [PROJECT_ROOT / '.env', AI_SERVER_DIR / '.env']:
-    if _env.exists():
-        load_dotenv(_env, override=False)
+# ai_server/.env is the single backend/notebook env file.
+_env = AI_SERVER_DIR / '.env'
+if _env.exists():
+    load_dotenv(_env, override=False)
 
 DATA_DIR = Path(os.getenv('DATA_DIR', PROJECT_ROOT / 'data'))
 STORAGE_DIR = Path(os.getenv('STORAGE_DIR', AI_SERVER_DIR / 'storage'))
@@ -32,7 +31,7 @@ APP_ENV = os.getenv('APP_ENV', 'local').strip().lower()
 # LLM configuration. This app is LLM-first: local/template execution is not a
 # supported runtime mode.
 LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'openai').strip().lower()
-LLM_MODEL = os.getenv('LLM_MODEL', 'gpt-5.4').strip()
+LLM_MODEL = os.getenv('LLM_MODEL', 'gpt-5.4-mini').strip()
 LLM_TEMPERATURE = float(os.getenv('LLM_TEMPERATURE', '0.2'))
 LLM_TIMEOUT_SECONDS = float(os.getenv('LLM_TIMEOUT_SECONDS', '60'))
 LLM_MAX_OUTPUT_TOKENS = int(os.getenv('LLM_MAX_OUTPUT_TOKENS', '4000'))
@@ -94,7 +93,7 @@ LLM_MODEL_CATALOG = {
         'cached_input_per_1m': 0.075,
         'output_per_1m': 4.50,
         'selectable': True,
-        'recommended': False,
+        'recommended': True,
     },
     'gpt-5.4': {
         'label': 'GPT-5.4',
@@ -103,7 +102,7 @@ LLM_MODEL_CATALOG = {
         'cached_input_per_1m': 0.25,
         'output_per_1m': 15.00,
         'selectable': True,
-        'recommended': True,
+        'recommended': False,
     },
     'gpt-5.5': {
         'label': 'GPT-5.5',

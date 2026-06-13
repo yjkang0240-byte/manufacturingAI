@@ -59,3 +59,43 @@
 - Alternatives: 최근 대화 전체를 prompt에 그대로 삽입.
 - Consequences: context 품질은 더 안정적이지만, ContextBuilder와 MemoryService 구현이 필요하다.
 - Related features: F-005
+
+## ADR-007: RAG Evidence Is A LangGraph SubAgent
+
+- Date: 2026-06-13
+- Status: accepted
+- Context: 기존 RAG Evidence 흐름은 class method pipeline에 가까워 Root graph와 책임 경계가 불명확했다.
+- Decision: query planning, retrieval, filtering, grading, citation, payload, trace를 `RagEvidenceSubAgent(StateGraph)` node로 분리한다.
+- Alternatives: service orchestrator 유지, Root graph 내부에서 RAG 단계를 직접 호출.
+- Consequences: Root graph는 RAG 내부 단계를 몰라도 되며, RAG runtime state와 trace를 독립적으로 테스트할 수 있다.
+- Related features: F-003, F-004
+
+## ADR-008: Single Agent-Internal RAG Production Path
+
+- Date: 2026-06-13
+- Status: accepted
+- Context: lightweight RAG, legacy retriever, lexical fallback, direct `RagService.search()` 호출이 섞이면 답변 경로가 불명확해진다.
+- Decision: agent 내부 RAG production path는 `RagEvidenceSubAgent` 하나로 통일하고, `/rag/search`는 API/debug seam으로만 유지한다.
+- Alternatives: lightweight RAG와 heavy RAG를 병행 유지.
+- Consequences: 구조는 단순해지고 silent fallback 위험은 줄지만, RAG 품질 문제는 SubAgent 안에서 직접 해결해야 한다.
+- Related features: F-003, F-004
+
+## ADR-009: Public Report Option Removed
+
+- Date: 2026-06-13
+- Status: accepted
+- Context: `generate_report` 옵션은 사용자 입력, route, formatter, UI를 복잡하게 만들었고 일반 답변과 긴 보고서가 혼재됐다.
+- Decision: 사용자/API/UI에서 report generation option을 제거하고, run metadata와 trace는 내부 history/debug에만 저장한다.
+- Alternatives: checkbox 기본값을 true로 변경, report route를 adapter로 유지.
+- Consequences: 사용자 답변은 간결해지고 endpoint contract가 단순해진다. “보고서 형식” 요청은 별도 mode가 아니라 Markdown 답변 스타일로 처리한다.
+- Related features: F-009
+
+## ADR-010: Chroma Index Is Rebuilt From JSONL Source Of Truth
+
+- Date: 2026-06-13
+- Status: accepted
+- Context: vector DB는 git ignored이고 한 환경에서 `rag_chunks.jsonl 727`과 Chroma 702 불일치가 발생했다.
+- Decision: `rag_chunks.jsonl`을 source of truth로 보고, 새 환경에서는 `scripts/index_rag_chunks_chroma.py --reset`으로 Chroma를 재색인한다.
+- Alternatives: vector DB를 git에 포함, 자동 sync/repair tool 추가.
+- Consequences: repository는 가벼워지고 재현 절차가 명확해진다. 단, 새 환경에서는 OpenAI embedding key와 runbook 실행이 필요하다.
+- Related features: F-008

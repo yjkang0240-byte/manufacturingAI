@@ -1,0 +1,6 @@
+id,retrieved_contexts_not_empty,retriever_recall_pass,citation_integrity_pass,no_error,response_not_empty,deterministic_pass_count
+rag-001,False,not_applicable,not_applicable,True,True,2
+rag-002,True,True,True,True,True,5
+rag-003,False,not_applicable,not_applicable,True,True,2
+rag-004,False,not_applicable,not_applicable,True,True,2
+rag-005,True,not_applicable,True,True,True,4

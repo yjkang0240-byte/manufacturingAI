@@ -1,7 +1,6 @@
 # Local environment
 .env
 .env.*
-!.env.example
 !ai_server/.env.example
 .env.local
 .python-version.local

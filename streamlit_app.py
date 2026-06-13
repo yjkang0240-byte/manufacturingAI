@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -382,8 +383,9 @@ def run_agent_with_progress(payload: dict[str, Any]) -> tuple[int, Any]:
     step_text.markdown('Agent 실행 대기 중')
 
     stream_url = f'{st.session_state.api_base_url.rstrip("/")}/agent/send/stream'
-    completed_steps: list[dict[str, str]] = []
+    completed_steps: list[dict[str, Any]] = []
     final_body: Any = None
+    started_at = time.perf_counter()
     try:
         with requests.post(stream_url, headers=api_headers(st.session_state.api_key), json=payload, timeout=120, stream=True) as response:
             if response.status_code != 200:
@@ -395,40 +397,45 @@ def run_agent_with_progress(payload: dict[str, Any]) -> tuple[int, Any]:
                 event = json.loads(raw_line)
                 event_type = event.get('type')
                 if event_type == 'trace':
-                    step = event.get('step') or {}
+                    step = dict(event.get('step') or {})
+                    elapsed_label = format_elapsed_seconds(time.perf_counter() - started_at)
+                    step['elapsed_seconds'] = elapsed_label
                     completed_steps.append(step)
                     current_step = step.get('step') or 'Agent'
                     current_detail = step.get('detail') or ''
                     current_status = trace_status_label(current_detail)
-                    status_box.update(label=f'Agent 실행 중: {current_step}', state='running')
+                    status_box.update(label=f'Agent 실행 중 ({elapsed_label}): {current_step}', state='running')
                     progress.progress(min(len(completed_steps) / 16, 0.98))
                     step_text.markdown(render_realtime_trace(completed_steps, planned_nodes))
+                    detail = f'[{elapsed_label}] {current_detail}'
                     if current_status == '실패':
-                        detail_box.error(current_detail)
+                        detail_box.error(detail)
                     elif current_status == '건너뜀':
-                        detail_box.warning(current_detail)
+                        detail_box.warning(detail)
                     else:
-                        detail_box.info(current_detail)
+                        detail_box.info(detail)
                 elif event_type == 'final':
                     final_body = event.get('response')
+                    elapsed_label = format_elapsed_seconds(time.perf_counter() - started_at)
                     progress.progress(1.0)
                     step_text.markdown(render_realtime_trace(completed_steps, planned_nodes, completed=True))
                     usage = (final_body or {}).get('llm_usage') if isinstance(final_body, dict) else None
                     if usage and (usage.get('calls', 0) or usage.get('replan_count', 0)):
                         detail_box.success(
-                            f'최종 답변 생성 및 안전 검증 완료 | '
+                            f'최종 답변 생성 및 안전 검증 완료 ({elapsed_label}) | '
                             f'tokens={usage.get("total_tokens", 0)} | '
                             f'cost=${float(usage.get("estimated_cost_usd") or 0):.6f} / '
                             f'₩{float(usage.get("estimated_cost_krw") or (float(usage.get("estimated_cost_usd") or 0) * float(usage.get("usd_krw_exchange_rate") or DEFAULT_USD_KRW_EXCHANGE_RATE))):,.0f} | '
                             f'replans={usage.get("replan_count", 0)}'
                         )
                     else:
-                        detail_box.success('최종 답변 생성 및 안전 검증 완료')
+                        detail_box.success(f'최종 답변 생성 및 안전 검증 완료 ({elapsed_label})')
                     status_box.update(label='Agent 실행 완료', state='complete')
                 elif event_type == 'error':
                     final_body = event
+                    elapsed_label = format_elapsed_seconds(time.perf_counter() - started_at)
                     status_box.update(label='Agent 실행 실패', state='error')
-                    detail_box.error((event.get('error') or {}).get('message') or 'Agent 실행 실패')
+                    detail_box.error(f'[{elapsed_label}] {(event.get("error") or {}).get("message") or "Agent 실행 실패"}')
     except (requests.RequestException, json.JSONDecodeError) as exc:
         status_box.update(label='스트리밍 연결 실패, 일반 실행으로 재시도', state='running')
         detail_box.warning(str(exc))
@@ -442,12 +449,14 @@ def run_agent_with_progress(payload: dict[str, Any]) -> tuple[int, Any]:
     return 200, final_body
 
 
-def render_realtime_trace(completed_steps: list[dict[str, str]], planned_nodes: list[str], completed: bool = False) -> str:
+def render_realtime_trace(completed_steps: list[dict[str, Any]], planned_nodes: list[str], completed: bool = False) -> str:
     completed_names = [step.get('step') or '' for step in completed_steps]
     lines: list[str] = []
     for idx, step in enumerate(completed_steps, 1):
         detail = step.get('detail', '')
-        lines.append(f'{idx}. `{trace_status_label(detail)}` **{step.get("step", "Agent")}**  \n   {detail}')
+        elapsed = step.get('elapsed_seconds')
+        elapsed_prefix = f'`+{elapsed}` ' if elapsed else ''
+        lines.append(f'{idx}. {elapsed_prefix}`{trace_status_label(detail)}` **{step.get("step", "Agent")}**  \n   {detail}')
     remaining = [node for node in planned_nodes if node not in completed_names]
     if remaining and not completed:
         lines.append('')
@@ -455,6 +464,10 @@ def render_realtime_trace(completed_steps: list[dict[str, str]], planned_nodes: 
         for node in remaining[:8]:
             lines.append(f'- `대기` {node}')
     return '\n'.join(lines) or 'Agent 실행 대기 중'
+
+
+def format_elapsed_seconds(seconds: float) -> str:
+    return f'{max(seconds, 0.0):.1f}초'
 
 
 def trace_status_label(detail: str) -> str:
