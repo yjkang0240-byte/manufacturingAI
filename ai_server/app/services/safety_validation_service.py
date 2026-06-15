@@ -43,6 +43,8 @@ class SafetyValidationService:
         ]
         unsafe_text = '\n'.join(unsafe_lines)
         for phrase in CONTROL_FORBIDDEN:
+            if SafetyValidationService._is_allowed_forbidden_phrase_context(phrase, unsafe_text):
+                continue
             if phrase in unsafe_text:
                 errors.append(f'금지된 설비 제어/보증 표현 감지: {phrase}')
 
@@ -100,6 +102,44 @@ class SafetyValidationService:
             '하지 않고',
         ]
         return any(term in line for term in policy_terms)
+
+    @staticmethod
+    def _is_allowed_forbidden_phrase_context(phrase: str, text: str) -> bool:
+        """Allow safety-policy references to forbidden actions.
+
+        The validator should block executable instructions like "가드 제거하고
+        점검하세요" or "LOTO 없이 진행하세요", but it should not block answers
+        that explicitly warn against those actions or recommend safer
+        alternatives.
+        """
+        if phrase not in (text or ''):
+            return False
+        for match in re.finditer(re.escape(phrase), text or ''):
+            window = text[max(0, match.start() - 20):match.end() + 30]
+            if any(term in window for term in [
+                '금지',
+                '위험',
+                '생략하지',
+                '우회하지',
+                '임의 개방',
+                '하지 마',
+                '하지말',
+                '하지 않',
+                '하면 안',
+                '면 안',
+                '해서는 안',
+                '수 없습니다',
+                '수 없',
+                '말고',
+                '직접 지시하지',
+                '제거 없이',
+                '생략 없이',
+                '우회 없이',
+                '확인 없이 진행하지',
+            ]):
+                continue
+            return False
+        return True
 
     @staticmethod
     def _salient_terms(text: str) -> set[str]:

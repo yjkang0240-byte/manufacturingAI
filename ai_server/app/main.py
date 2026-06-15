@@ -46,6 +46,10 @@ app.add_middleware(
 logger = logging.getLogger(__name__)
 
 prediction_service = PredictionService()
+try:
+    prediction_service.load_bundle()
+except AppError:
+    logger.warning('Prediction model bundle is not loaded at startup')
 rag_service = RagService()
 llm_service = LLMService()
 domain_service = DomainKnowledgeService()

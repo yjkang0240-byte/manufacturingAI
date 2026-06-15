@@ -1,5 +1,162 @@
 # Manufacturing AI Agent
 
+## 0. 완전 초기 상태에서 다시 세팅하기
+
+아래 순서만 보면 됩니다. 기준 위치는 repo root(`manufacturingAI`)입니다.
+
+### 1) 가상환경 생성 및 패키지 설치
+
+PowerShell:
+
+```powershell
+cd ai_server
+$env:UV_CACHE_DIR='.uv-cache'
+uv venv .venv --python 3.12
+uv pip install -r requirements.txt
+```
+
+`uv`가 없으면 Python venv로도 가능합니다.
+
+```powershell
+cd ai_server
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### 2) 환경 파일 준비
+
+```powershell
+cd ai_server
+Copy-Item .env.example .env
+```
+
+`ai_server/.env`에서 최소한 아래 값을 확인합니다.
+
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5.4-mini
+OPENAI_API_KEY=your_key_here
+OPENAI_BASE_URL=https://api.openai.com/v1
+
+RAG_EMBEDDING_PROVIDER=openai
+RAG_EMBEDDING_MODEL=text-embedding-3-small
+CHROMA_COLLECTION=manufacturing_rag
+CHROMA_PERSIST_DIR=ai_server/data/vector_db/chroma
+```
+
+위 값이 "처음 구동" 기준의 기본 설정입니다. 이 경우 4단계에서 Chroma Vector DB를 처음 생성할 때 OpenAI embedding으로 바로 인덱싱됩니다.
+
+OpenAI key 없이 로컬 구조만 먼저 확인하려는 경우에만 아래처럼 바꿉니다.
+
+```env
+RAG_EMBEDDING_PROVIDER=local-hash
+RAG_EMBEDDING_MODEL=local-hash-v1
+```
+
+### 3) AI4I 예측 모델 학습
+
+```powershell
+cd ai_server
+.\.venv\Scripts\python.exe scripts\train_ai4i_model.py
+```
+
+생성 위치:
+
+```text
+ai_server/storage/models/ai4i_model_bundle.joblib
+ai_server/storage/models/ai4i_metrics.json
+```
+
+### 4) Vector DB 생성
+
+이미 준비된 chunk 파일(`ai_server/data/processed/rag_chunks.jsonl`)을 Chroma에 넣습니다.
+
+```powershell
+cd ai_server
+.\.venv\Scripts\python.exe scripts\index_rag_chunks_chroma.py --reset
+```
+
+정상 완료 예:
+
+```json
+{
+  "indexed_chunks": 727,
+  "collection": "manufacturing_rag",
+  "embedding_provider": "openai"
+}
+```
+
+이 명령은 `.env`의 `RAG_EMBEDDING_PROVIDER`와 `RAG_EMBEDDING_MODEL` 값을 따라갑니다. 처음 구동 기준에서는 OpenAI embedding으로 생성됩니다.
+
+### 5) 서버와 UI 실행
+
+터미널 1 - FastAPI:
+
+```powershell
+cd ai_server
+.\scripts\run_api_server.cmd
+```
+
+또는 직접 실행:
+
+```powershell
+cd ai_server
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+터미널 2 - Streamlit:
+
+```powershell
+cd ai_server
+.\scripts\run_streamlit_ui.cmd
+```
+
+또는 직접 실행:
+
+```powershell
+cd ..
+.\ai_server\.venv\Scripts\python.exe -m streamlit run streamlit_app.py --server.address 127.0.0.1 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+```
+
+접속:
+
+```text
+FastAPI:   http://127.0.0.1:8000
+API docs:  http://127.0.0.1:8000/docs
+Streamlit: http://127.0.0.1:8501
+```
+
+### 6) 정상 여부 확인
+
+```powershell
+Invoke-WebRequest -Uri http://127.0.0.1:8000/ready -UseBasicParsing | Select-Object -ExpandProperty Content
+```
+
+정상 상태:
+
+```json
+{
+  "status": "ready",
+  "rag_ready": true,
+  "rag_backend": "chroma",
+  "prediction_model_loaded": true
+}
+```
+
+RAG 검색 확인:
+
+```powershell
+$body = @{ query = 'maintenance safety lockout tagout'; top_k = 3 } | ConvertTo-Json
+Invoke-WebRequest -Uri http://127.0.0.1:8000/rag/search -Method Post -Body $body -ContentType 'application/json' -UseBasicParsing
+```
+
+관련 runbook:
+
+- `docs/RAG_INDEX_RUNBOOK.md`
+- `docs/RUN_AND_NEXT_WORK.md`
+
+---
+
 AI4I 공정 데이터 예측, OSHA/Haas/KOSHA 문서 RAG, 제조 도메인 YAML 정책,
 Artifact 품질 검증, 안전 게이트 검증, 답변 문장 검증을 결합한 제조 특화 AI Agent 서버입니다.
 

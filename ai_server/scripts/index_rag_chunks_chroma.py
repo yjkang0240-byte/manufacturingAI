@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from pathlib import Path
 from typing import Any
 
-from rag_pipeline_utils import RAG_CHUNKS_PATH, RAG_DATA_DIR, env_value, read_jsonl
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.services.local_embedding import LOCAL_HASH_EMBEDDING_MODEL, hash_text_embeddings
+from rag_pipeline_utils import PROJECT_ROOT, RAG_CHUNKS_PATH, RAG_DATA_DIR, env_value, read_jsonl
 
 
 def _openai_client():
@@ -65,6 +70,14 @@ def _metadata(row: dict[str, Any]) -> dict[str, str | int | float | bool]:
     return metadata
 
 
+def _persist_dir(value: str | None) -> str:
+    raw = value or env_value('CHROMA_PERSIST_DIR') or str(RAG_DATA_DIR / 'vector_db' / 'chroma')
+    path = Path(raw)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return str(path)
+
+
 def index_chunks(
     *,
     persist_dir: str | None = None,
@@ -80,7 +93,7 @@ def index_chunks(
         raise SystemExit('chromadb is not installed. Install requirements before Chroma indexing.') from exc
 
     chunks = read_jsonl(RAG_CHUNKS_PATH)
-    directory = persist_dir or env_value('CHROMA_PERSIST_DIR') or str(RAG_DATA_DIR / 'vector_db' / 'chroma')
+    directory = _persist_dir(persist_dir)
     collection_name = collection_name or env_value('CHROMA_COLLECTION', 'manufacturing_rag')
     client = chromadb.PersistentClient(path=directory)
     if reset:
@@ -106,6 +119,15 @@ def index_chunks(
         elif embedding_provider == 'chroma-default':
             for id_batch, doc_batch, meta_batch in zip(_batches(ids, batch_size), _batches(documents, batch_size), _batches(metadatas, batch_size)):
                 collection.upsert(ids=id_batch, documents=doc_batch, metadatas=meta_batch)
+        elif embedding_provider == 'local-hash':
+            embeddings = hash_text_embeddings(documents)
+            for id_batch, doc_batch, meta_batch, embedding_batch in zip(
+                _batches(ids, batch_size),
+                _batches(documents, batch_size),
+                _batches(metadatas, batch_size),
+                _batches(embeddings, batch_size),
+            ):
+                collection.upsert(ids=id_batch, documents=doc_batch, metadatas=meta_batch, embeddings=embedding_batch)
         else:
             raise SystemExit(f'Unsupported embedding provider: {embedding_provider}')
     return {
@@ -113,7 +135,7 @@ def index_chunks(
         'collection': collection_name,
         'persist_dir': directory,
         'embedding_provider': embedding_provider,
-        'embedding_model': embedding_model or env_value('RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
+        'embedding_model': LOCAL_HASH_EMBEDDING_MODEL if embedding_provider == 'local-hash' else embedding_model or env_value('RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
     }
 
 
@@ -121,7 +143,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Index rag_chunks.jsonl into Chroma.')
     parser.add_argument('--persist-dir')
     parser.add_argument('--collection', default=env_value('CHROMA_COLLECTION', 'manufacturing_rag'))
-    parser.add_argument('--embedding-provider', choices=['openai', 'chroma-default'], default=env_value('RAG_EMBEDDING_PROVIDER', 'openai'))
+    parser.add_argument('--embedding-provider', choices=['openai', 'chroma-default', 'local-hash'], default=env_value('RAG_EMBEDDING_PROVIDER', 'openai'))
     parser.add_argument('--embedding-model', default=env_value('RAG_EMBEDDING_MODEL', 'text-embedding-3-small'))
     parser.add_argument('--batch-size', type=int, default=64)
     parser.add_argument('--reset', action='store_true', help='Delete and recreate the Chroma collection before indexing.')

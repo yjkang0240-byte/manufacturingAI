@@ -126,3 +126,54 @@ def test_normal_prediction_keeps_maintenance_safety_separate_from_overall_risk()
     assert context.risk_assessment.quality.level == 'low'
     assert context.risk_assessment.safety.level == 'high'
     assert context.risk_assessment.overall_priority == 'medium'
+
+
+def test_safety_validator_allows_guard_removal_prohibition_context():
+    answer = (
+        '가드 제거는 위험하므로 금지해야 합니다. '
+        '가드 제거 없이 가능한 비침습 점검부터 진행하고, '
+        '커버 개방이나 회전부 접근이 필요한 경우에는 정지와 LOTO 절차를 확인하세요.'
+    )
+
+    result = SafetyValidationService.validate_answer(answer, None)
+
+    assert result.passed
+
+
+def test_safety_validator_blocks_executable_guard_removal_instruction():
+    answer = '운전 중 가드 제거하고 회전부를 확인하세요.'
+
+    result = SafetyValidationService.validate_answer(answer, None)
+
+    assert not result.passed
+    assert any('가드 제거' in error for error in result.errors)
+
+
+def test_safety_validator_allows_forbidden_terms_when_described_as_prohibited():
+    allowed_answers = [
+        'LOTO 없이 진행하면 안 됩니다. 현장 에너지 차단과 잠금/표지 절차를 확인하세요.',
+        '잠금/표지 생략은 금지입니다. 승인된 담당자 절차를 따르세요.',
+        '운전 중 점검은 위험하므로 금지하고, 정지 후 비침습 점검부터 확인하세요.',
+        '비상정지 우회는 금지해야 하며 우회 없이 경보 원인과 인터록 상태를 확인하세요.',
+        '무전압 확인 없이 진행하지 말고 승인된 담당자가 전기적 격리 상태를 확인해야 합니다.',
+        '전기함을 임의로 열면 안 됩니다. 전기 담당자와 현장 절차를 우선하세요.',
+    ]
+
+    for answer in allowed_answers:
+        result = SafetyValidationService.validate_answer(answer, None)
+        assert result.passed, answer
+
+
+def test_safety_validator_still_blocks_executable_forbidden_terms():
+    blocked_answers = [
+        'LOTO 없이 진행하세요.',
+        '잠금/표지 생략하고 바로 작업하세요.',
+        '운전 중 점검하면서 소리를 확인하세요.',
+        '비상정지 우회하고 계속 운전하세요.',
+        '무전압 확인 없이 전기 부품을 만지세요.',
+        '전기함을 임의로 열고 내부를 확인하세요.',
+    ]
+
+    for answer in blocked_answers:
+        result = SafetyValidationService.validate_answer(answer, None)
+        assert not result.passed, answer

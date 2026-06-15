@@ -16,6 +16,7 @@ from app.config import (
     RAG_EMBEDDING_PROVIDER,
 )
 from app.schemas.rag import RagChunk
+from app.services.local_embedding import hash_text_embeddings
 
 
 class ChromaRetrievalDiagnostics(BaseModel):
@@ -67,6 +68,9 @@ class ChromaRetriever:
             if self.embedding_provider == 'openai':
                 query_kwargs.pop('query_texts')
                 query_kwargs['query_embeddings'] = [self._embed(query)]
+            elif self.embedding_provider == 'local-hash':
+                query_kwargs.pop('query_texts')
+                query_kwargs['query_embeddings'] = hash_text_embeddings([query])
             if filters:
                 where = self._where(filters)
                 if where:
